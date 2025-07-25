@@ -1,0 +1,102 @@
+[tool.poetry]
+name = "voice-doc-intelligence"
+version = "0.1.0"
+description = "Voice-enabled document intelligence system"
+authors = ["Your Name <email@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# Core Framework
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.30.0"}
+pydantic = "^2.8.0"
+pydantic-settings = "^2.3.0"
+
+# AI/LLM Orchestration
+llama-index = "^0.10.50"
+llama-index-vector-stores-qdrant = "^0.2.8"
+llama-index-graph-stores-tigerdb = "^0.1.0"
+crewai = "^0.30.0"
+onprem = "^0.0.30"
+vellum-ai = "^0.3.0"
+
+# Vector/Graph Databases
+qdrant-client = "^1.10.0"
+pyTigerGraph = "^1.5.0"
+tigergraph-mlworkbench = "^1.2.0"
+
+# Voice Processing
+openai = "^1.35.0"
+cartesia = "^0.1.0"
+
+# LiveKit Agents for Voice AI
+livekit-agents = {extras = ["openai", "silero", "deepgram", "cartesia", "turn-detector"], version = "^1.0.0"}
+livekit = "^0.11.0"
+livekit-plugins-openai = "^0.5.0"
+livekit-plugins-deepgram = "^0.6.0"
+livekit-plugins-silero = "^0.5.0"
+livekit-plugins-cartesia = "^0.1.0"
+
+# Additional voice processing
+webrtcvad = "^2.0.10"
+sounddevice = "^0.4.6"
+pyaudio = "^0.2.11"
+
+# Document Processing
+docling = "^1.5.0"
+pypdf = "^4.2.0"
+python-docx = "^1.1.0"
+unstructured = "^0.14.0"
+
+# Workflow Orchestration
+temporalio = "^1.6.0"
+dagster = "^1.7.0"
+
+# Streaming/Events
+pulsar-client = "^3.5.0"
+aiokafka = "^0.11.0"
+
+# Database/Cache
+asyncpg = "^0.29.0"
+redis = "^5.0.0"
+motor = "^3.4.0"
+
+# Security
+ironcore-alloy = "^0.1.0"
+cryptography = "^42.0.0"
+
+# Observability
+opentelemetry-api = "^1.25.0"
+opentelemetry-instrumentation-fastapi = "^0.46b0"
+prometheus-client = "^0.20.0"
+
+# ML/Data
+numpy = "^1.26.0"
+pandas = "^2.2.0"
+scikit-learn = "^1.5.0"
+torch = "^2.3.0"
+
+# Development
+pytest = "^8.2.0"
+pytest-asyncio = "^0.23.0"
+black = "^24.4.0"
+ruff = "^0.5.0"
+mypy = "^1.10.0"
+
+[tool.poetry.group.dev.dependencies]
+ipython = "^8.25.0"
+jupyter = "^1.0.0"
+pre-commit = "^3.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

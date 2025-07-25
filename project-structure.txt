@@ -1,0 +1,54 @@
+voice-doc-intelligence/
+├── apps/
+│   ├── web/                    # Astro frontend
+│   │   ├── src/
+│   │   │   ├── components/     # UI components
+│   │   │   ├── islands/        # Interactive islands
+│   │   │   ├── pages/          # Astro pages
+│   │   │   └── stores/         # Zustand stores
+│   │   └── astro.config.mjs
+│   │
+│   ├── api/                    # FastAPI backend
+│   │   ├── services/
+│   │   │   ├── document/       # Document processing
+│   │   │   ├── voice/          # Voice processing
+│   │   │   ├── rag/            # RAG pipeline
+│   │   │   └── agents/         # AI agents
+│   │   ├── workflows/          # Temporal workflows
+│   │   ├── core/               # Core utilities
+│   │   └── main.py
+│   │
+│   └── workers/                # Background workers
+│       ├── embedding/          # Embedding generation
+│       ├── indexing/           # Document indexing
+│       └── training/           # Model training
+│
+├── packages/
+│   ├── shared/                 # Shared utilities
+│   ├── types/                  # TypeScript types
+│   └── config/                 # Shared configs
+│
+├── infrastructure/
+│   ├── local/                  # Local dev setup
+│   │   ├── docker-compose.yml
+│   │   └── k3s/               # Local Kubernetes
+│   ├── pulumi/                # Infrastructure as Code
+│   │   ├── __main__.py        # Pulumi program
+│   │   └── stacks/            # Environment configs
+│   └── kubernetes/            # K8s manifests
+│
+├── data/
+│   ├── documents/             # Raw documents
+│   ├── embeddings/            # Generated embeddings
+│   └── models/                # Model artifacts
+│
+├── scripts/
+│   ├── setup.sh              # Initial setup
+│   ├── dev.sh                # Development runner
+│   └── deploy.sh             # Deployment script
+│
+├── .env.example
+├── pyproject.toml            # Python dependencies
+├── package.json              # Monorepo root
+├── pnpm-workspace.yaml       # PNPM workspace
+└── README.md

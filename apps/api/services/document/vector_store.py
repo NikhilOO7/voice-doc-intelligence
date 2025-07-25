@@ -1,78 +1,244 @@
-# apps/api/services/document/vector_store.py
-from typing import List, Dict, Any, Optional, Tuple
+"""
+Enhanced Vector Store Service combining original and modern multi-collection approach
+"""
+
+import logging
+import asyncio
 import uuid
+from typing import List, Dict, Any, Optional, Tuple
+
+# Original imports
 from qdrant_client import QdrantClient
+from qdrant_client.http import models
+from qdrant_client.http.models import Distance, VectorParams
+
+# Enhanced imports
 from qdrant_client.models import (
-    Distance, VectorParams, PointStruct, Filter, FieldCondition,
-    Range, MatchValue, SearchRequest, ScoredPoint, UpdateStatus,
-    CollectionStatus, OptimizersConfigDiff, HnswConfigDiff
+    PointStruct, Filter, FieldCondition, Range, MatchValue, 
+    SearchRequest, ScoredPoint, UpdateStatus, CollectionStatus, 
+    OptimizersConfigDiff, HnswConfigDiff
 )
 import numpy as np
-import logging
 
-from ...core.connections import connections
-from ...core.config import settings
+from apps.api.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-class ModernVectorStore:
-    """Advanced vector store using Qdrant with multi-model support"""
+class VectorStoreService:
+    """Original vector store service for backward compatibility"""
     
     def __init__(self):
-        self.client = connections.get_qdrant()
+        self.client = None
+        self.collection_name = "documents"
+        self.vector_size = 3072  # text-embedding-3-large dimension
+        
+    async def initialize(self):
+        """Initialize Qdrant client and collection - original method preserved"""
+        try:
+            self.client = QdrantClient(
+                host=settings.qdrant_host,
+                port=settings.qdrant_port,
+                timeout=30
+            )
+            
+            # Create collection if it doesn't exist
+            collections = await asyncio.to_thread(self.client.get_collections)
+            collection_names = [col.name for col in collections.collections]
+            
+            if self.collection_name not in collection_names:
+                await asyncio.to_thread(
+                    self.client.create_collection,
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(
+                        size=self.vector_size,
+                        distance=Distance.COSINE
+                    )
+                )
+                logger.info(f"Created collection: {self.collection_name}")
+            
+        except Exception as e:
+            logger.error(f"Qdrant initialization failed: {e}")
+            raise
+    
+    async def store_embeddings(self, document_id: str, embeddings_data: List[Dict[str, Any]]):
+        """Store embeddings in vector database - original method preserved"""
+        try:
+            if not self.client:
+                await self.initialize()
+            
+            # Prepare points for insertion
+            points = []
+            for i, data in enumerate(embeddings_data):
+                point = models.PointStruct(
+                    id=f"{document_id}_{i}",
+                    vector=data["embedding"],
+                    payload={
+                        "document_id": document_id,
+                        "chunk_id": data["chunk_id"],
+                        "content": data["content"],
+                        "metadata": data.get("metadata", {}),
+                        "chunk_index": i
+                    }
+                )
+                points.append(point)
+            
+            # Insert points
+            await asyncio.to_thread(
+                self.client.upsert,
+                collection_name=self.collection_name,
+                points=points
+            )
+            
+            logger.info(f"Stored {len(points)} embeddings for document {document_id}")
+            
+        except Exception as e:
+            logger.error(f"Embedding storage failed: {e}")
+            raise
+    
+    async def search_similar(self, query_embedding: List[float], limit: int = 10, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        """Search for similar vectors - original method preserved"""
+        try:
+            if not self.client:
+                await self.initialize()
+            
+            # Prepare filter if provided
+            query_filter = None
+            if filters:
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key=key,
+                            match=models.MatchValue(value=value)
+                        )
+                        for key, value in filters.items()
+                    ]
+                )
+            
+            # Search
+            search_results = await asyncio.to_thread(
+                self.client.search,
+                collection_name=self.collection_name,
+                query_vector=query_embedding,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True
+            )
+            
+            # Format results
+            results = []
+            for result in search_results:
+                results.append({
+                    "id": result.id,
+                    "score": result.score,
+                    "content": result.payload.get("content", ""),
+                    "metadata": result.payload.get("metadata", {}),
+                    "document_id": result.payload.get("document_id", ""),
+                    "chunk_id": result.payload.get("chunk_id", "")
+                })
+            
+            logger.debug(f"Found {len(results)} similar vectors")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
+            raise
+    
+    async def delete_document(self, document_id: str):
+        """Delete all vectors for a document - original method preserved"""
+        try:
+            if not self.client:
+                await self.initialize()
+            
+            await asyncio.to_thread(
+                self.client.delete,
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="document_id",
+                                match=models.MatchValue(value=document_id)
+                            )
+                        ]
+                    )
+                )
+            )
+            
+            logger.info(f"Deleted vectors for document {document_id}")
+            
+        except Exception as e:
+            logger.error(f"Vector deletion failed: {e}")
+            raise
+
+
+class ModernVectorStore:
+    """Enhanced vector store with multi-model and multi-collection support"""
+    
+    def __init__(self):
+        self.client = QdrantClient(
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+            timeout=30
+        )
+        
         self.collections = {
             "base": "document_chunks_base",
-            "local": "document_chunks_local",
+            "local": "document_chunks_local", 
             "document": "document_chunks_document",
             "global": "document_chunks_global",
             "semantic": "document_chunks_semantic"
         }
+        
         self._ensure_collections()
     
     def _ensure_collections(self):
         """Ensure all required collections exist with optimal settings"""
-        # Get existing collections
-        existing = {c.name for c in self.client.get_collections().collections}
-        
-        # Collection settings for different embedding models
-        vector_configs = {
-            "openai": VectorParams(
-                size=3072,  # text-embedding-3-large dimension
-                distance=Distance.COSINE
-            ),
-            "voyage": VectorParams(
-                size=1024,  # voyage-3-large dimension
-                distance=Distance.COSINE
-            ),
-            "local": VectorParams(
-                size=384,  # all-MiniLM-L6-v2 dimension
-                distance=Distance.COSINE
-            )
-        }
-        
-        # Optimized HNSW configuration for better search performance
-        hnsw_config = HnswConfigDiff(
-            m=16,  # Number of connections
-            ef_construct=100,  # Construction time accuracy
-            full_scan_threshold=10000,  # When to switch to exact search
-        )
-        
-        optimizer_config = OptimizersConfigDiff(
-            deleted_threshold=0.2,
-            vacuum_min_vector_number=1000,
-            default_segment_number=5,
-        )
-        
-        for context_type, collection_name in self.collections.items():
-            if collection_name not in existing:
-                logger.info(f"Creating collection: {collection_name}")
-                self.client.create_collection(
-                    collection_name=collection_name,
-                    vectors_config=vector_configs,  # Multi-vector support
-                    hnsw_config=hnsw_config,
-                    optimizers_config=optimizer_config,
-                    on_disk_payload=True  # Store payload on disk for large documents
+        try:
+            # Get existing collections
+            existing = {c.name for c in self.client.get_collections().collections}
+            
+            # Collection settings for different embedding models
+            vector_configs = {
+                "openai": VectorParams(
+                    size=3072,  # text-embedding-3-large dimension
+                    distance=Distance.COSINE
+                ),
+                "voyage": VectorParams(
+                    size=1024,  # voyage-3-large dimension
+                    distance=Distance.COSINE
+                ),
+                "local": VectorParams(
+                    size=384,  # all-MiniLM-L6-v2 dimension
+                    distance=Distance.COSINE
                 )
+            }
+            
+            # Optimized HNSW configuration
+            hnsw_config = HnswConfigDiff(
+                m=16,
+                ef_construct=100,
+                full_scan_threshold=10000,
+            )
+            
+            optimizer_config = OptimizersConfigDiff(
+                deleted_threshold=0.2,
+                vacuum_min_vector_number=1000,
+                default_segment_number=5,
+            )
+            
+            for context_type, collection_name in self.collections.items():
+                if collection_name not in existing:
+                    logger.info(f"Creating collection: {collection_name}")
+                    self.client.create_collection(
+                        collection_name=collection_name,
+                        vectors_config=vector_configs,  # Multi-vector support
+                        hnsw_config=hnsw_config,
+                        optimizers_config=optimizer_config,
+                        on_disk_payload=True
+                    )
+        except Exception as e:
+            logger.error(f"Collection initialization failed: {e}")
+            raise
     
     async def store_embeddings(
         self,
@@ -113,262 +279,88 @@ class ModernVectorStore:
                 # Create point with multiple vectors
                 point = PointStruct(
                     id=point_id,
-                    vector=context_embeddings,  # Dict of model_name: embedding
+                    vector=context_embeddings,  # Multi-vector support
                     payload=payload
                 )
                 points.append(point)
             
-            # Batch upload to Qdrant
+            # Store points in collection
             if points:
-                self.client.upsert(
-                    collection_name=self.collections[context_type],
-                    points=points,
-                    wait=True
-                )
-                stored_counts[context_type] = len(points)
-                logger.info(f"Stored {len(points)} points in {self.collections[context_type]}")
+                try:
+                    self.client.upsert(
+                        collection_name=self.collections[context_type],
+                        points=points
+                    )
+                    stored_counts[context_type] = len(points)
+                    logger.info(f"Stored {len(points)} points in {self.collections[context_type]}")
+                except Exception as e:
+                    logger.error(f"Failed to store in {self.collections[context_type]}: {e}")
+                    stored_counts[context_type] = 0
+            else:
+                stored_counts[context_type] = 0
         
         return stored_counts
     
     async def search(
         self,
         query_embeddings: Dict[str, List[float]],
-        context_weights: Optional[Dict[str, float]] = None,
         filters: Optional[Dict[str, Any]] = None,
         top_k: int = 10,
-        score_threshold: float = 0.0
+        context_types: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Advanced search across multiple context levels"""
+        """Search across multiple collections and embedding models"""
+        if context_types is None:
+            context_types = list(self.collections.keys())
         
-        if context_weights is None:
-            context_weights = {
-                "base": 0.3,
-                "local": 0.2,
-                "document": 0.2,
-                "global": 0.15,
-                "semantic": 0.15
-            }
-        
-        # Build filter conditions
-        filter_conditions = []
-        if filters:
-            if "document_id" in filters:
-                filter_conditions.append(
-                    FieldCondition(
-                        key="document_id",
-                        match=MatchValue(value=filters["document_id"])
-                    )
-                )
-            if "min_tokens" in filters:
-                filter_conditions.append(
-                    FieldCondition(
-                        key="token_count",
-                        range=Range(gte=filters["min_tokens"])
-                    )
-                )
-        
-        search_filter = Filter(must=filter_conditions) if filter_conditions else None
-        
-        # Search in each context collection
         all_results = []
         
-        for context_type, weight in context_weights.items():
-            if weight <= 0:
+        # Prepare filter
+        query_filter = None
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                conditions.append(
+                    FieldCondition(key=key, match=MatchValue(value=value))
+                )
+            query_filter = Filter(must=conditions)
+        
+        # Search each context type
+        for context_type in context_types:
+            if context_type not in self.collections:
                 continue
             
             collection_name = self.collections[context_type]
             
-            # Search with the best available embedding
-            vector_name = None
-            query_vector = None
-            
-            # Prefer Voyage > OpenAI > Local
-            if "voyage" in query_embeddings and query_embeddings["voyage"]:
-                vector_name = "voyage"
-                query_vector = query_embeddings["voyage"]
-            elif "openai" in query_embeddings and query_embeddings["openai"]:
-                vector_name = "openai"
-                query_vector = query_embeddings["openai"]
-            elif "local" in query_embeddings and query_embeddings["local"]:
-                vector_name = "local"
-                query_vector = query_embeddings["local"]
-            
-            if not query_vector:
-                continue
-            
-            try:
-                results = self.client.search(
-                    collection_name=collection_name,
-                    query_vector=(vector_name, query_vector),
-                    limit=top_k,
-                    query_filter=search_filter,
-                    score_threshold=score_threshold,
-                    with_payload=True,
-                    with_vectors=False  # Don't return vectors to save bandwidth
-                )
+            # Search with multiple vector models
+            for model_name, embedding in query_embeddings.items():
+                if embedding is None:
+                    continue
                 
-                # Add context weight to results
-                for result in results:
-                    all_results.append({
-                        "id": result.id,
-                        "score": result.score * weight,
-                        "base_score": result.score,
-                        "context_type": context_type,
-                        "weight": weight,
-                        "payload": result.payload
-                    })
-                    
-            except Exception as e:
-                logger.error(f"Search failed in {collection_name}: {e}")
-        
-        # Combine and rank results
-        combined_results = self._combine_results(all_results)
-        
-        # Sort by combined score
-        combined_results.sort(key=lambda x: x["combined_score"], reverse=True)
-        
-        return combined_results[:top_k]
-    
-    def _combine_results(self, all_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Combine results from multiple context searches"""
-        # Group by document_id and chunk_index
-        result_groups = {}
-        
-        for result in all_results:
-            payload = result["payload"]
-            key = f"{payload['document_id']}_{payload['chunk_index']}"
-            
-            if key not in result_groups:
-                result_groups[key] = {
-                    "document_id": payload["document_id"],
-                    "chunk_index": payload["chunk_index"],
-                    "chunk_content": payload["chunk_content"],
-                    "metadata": payload.get("metadata", {}),
-                    "scores": {},
-                    "contexts": {},
-                    "combined_score": 0.0
-                }
-            
-            # Add score and context for this search
-            result_groups[key]["scores"][result["context_type"]] = {
-                "score": result["base_score"],
-                "weighted_score": result["score"]
-            }
-            result_groups[key]["contexts"][result["context_type"]] = payload.get("context", "")
-            result_groups[key]["combined_score"] += result["score"]
-        
-        return list(result_groups.values())
-    
-    async def get_similar_chunks(
-        self,
-        document_id: str,
-        chunk_index: int,
-        top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        """Find similar chunks within the same document"""
-        # First, get the chunk's embedding
-        chunk_filter = Filter(
-            must=[
-                FieldCondition(key="document_id", match=MatchValue(value=document_id)),
-                FieldCondition(key="chunk_index", match=MatchValue(value=chunk_index))
-            ]
-        )
-        
-        # Get the chunk from base collection
-        results = self.client.scroll(
-            collection_name=self.collections["base"],
-            scroll_filter=chunk_filter,
-            limit=1,
-            with_vectors=True
-        )
-        
-        if not results[0]:
-            return []
-        
-        chunk = results[0][0]
-        
-        # Search for similar chunks in the same document
-        similar_filter = Filter(
-            must=[
-                FieldCondition(key="document_id", match=MatchValue(value=document_id))
-            ],
-            must_not=[
-                FieldCondition(key="chunk_index", match=MatchValue(value=chunk_index))
-            ]
-        )
-        
-        # Use the chunk's vector to find similar chunks
-        similar_results = []
-        for vector_name, vector in chunk.vector.items():
-            if vector:
-                results = self.client.search(
-                    collection_name=self.collections["base"],
-                    query_vector=(vector_name, vector),
-                    limit=top_k,
-                    query_filter=similar_filter,
-                    with_payload=True
-                )
-                similar_results.extend(results)
-        
-        # Deduplicate and sort
-        seen = set()
-        unique_results = []
-        for result in sorted(similar_results, key=lambda x: x.score, reverse=True):
-            chunk_idx = result.payload["chunk_index"]
-            if chunk_idx not in seen:
-                seen.add(chunk_idx)
-                unique_results.append({
-                    "chunk_index": chunk_idx,
-                    "similarity_score": result.score,
-                    "content": result.payload["chunk_content"],
-                    "metadata": result.payload.get("metadata", {})
-                })
-        
-        return unique_results[:top_k]
-    
-    async def update_chunk_metadata(
-        self,
-        document_id: str,
-        chunk_index: int,
-        metadata_updates: Dict[str, Any]
-    ) -> bool:
-        """Update metadata for a specific chunk across all collections"""
-        success = True
-        
-        for collection_name in self.collections.values():
-            try:
-                # Find points matching document_id and chunk_index
-                filter_cond = Filter(
-                    must=[
-                        FieldCondition(key="document_id", match=MatchValue(value=document_id)),
-                        FieldCondition(key="chunk_index", match=MatchValue(value=chunk_index))
-                    ]
-                )
-                
-                # Get matching points
-                results = self.client.scroll(
-                    collection_name=collection_name,
-                    scroll_filter=filter_cond,
-                    limit=10,
-                    with_payload=True
-                )
-                
-                # Update each point's metadata
-                for point in results[0]:
-                    updated_payload = point.payload.copy()
-                    updated_payload["metadata"].update(metadata_updates)
-                    
-                    self.client.set_payload(
+                try:
+                    results = self.client.search(
                         collection_name=collection_name,
-                        payload=updated_payload,
-                        points=[point.id]
+                        query_vector=(model_name, embedding),
+                        query_filter=query_filter,
+                        limit=top_k,
+                        with_payload=True
                     )
                     
-            except Exception as e:
-                logger.error(f"Failed to update metadata in {collection_name}: {e}")
-                success = False
+                    # Add context type and model info to results
+                    for result in results:
+                        all_results.append({
+                            "id": result.id,
+                            "score": result.score,
+                            "payload": result.payload,
+                            "context_type": context_type,
+                            "model_used": model_name
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Search failed for {collection_name} with {model_name}: {e}")
         
-        return success
+        # Sort all results by score and return top_k
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+        return all_results[:top_k]
     
     async def delete_document(self, document_id: str) -> Dict[str, int]:
         """Delete all chunks for a document from all collections"""

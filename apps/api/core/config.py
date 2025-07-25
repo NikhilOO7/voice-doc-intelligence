@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     minio_access_key: str = Field(default="minioadmin", env="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(default="minioadmin", env="MINIO_SECRET_KEY")
     minio_bucket: str = Field(default="documents", env="MINIO_BUCKET")
+
+    # Document Processing Settings (new - enhanced functionality)
+    chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
+    max_file_size: int = Field(default=100*1024*1024, env="MAX_FILE_SIZE")  # 100MB
+
+    # Processing Pipeline Settings (new)
+    use_enhanced_processing: bool = Field(default=True, env="USE_ENHANCED_PROCESSING")
+    enable_contextual_embeddings: bool = Field(default=True, env="ENABLE_CONTEXTUAL_EMBEDDINGS")
+    enable_multi_agent_crew: bool = Field(default=True, env="ENABLE_MULTI_AGENT_CREW")
+
+    # Performance Settings (new)
+    embedding_batch_size: int = Field(default=10, env="EMBEDDING_BATCH_SIZE")
+    max_concurrent_processing: int = Field(default=5, env="MAX_CONCURRENT_PROCESSING")
     
     # Temporal
     temporal_host: str = Field(default="localhost:7233", env="TEMPORAL_HOST")
@@ -74,11 +88,6 @@ class Settings(BaseSettings):
     # Pulsar
     pulsar_url: str = Field(default="pulsar://localhost:6650", env="PULSAR_URL")
     pulsar_topic_prefix: str = Field(default="doc-intel", env="PULSAR_TOPIC_PREFIX")
-    
-    # Document Processing
-    max_file_size: int = Field(default=100 * 1024 * 1024, env="MAX_FILE_SIZE")  # 100MB
-    chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
-    chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
     
     # Security
     jwt_secret: str = Field(default="your-secret-key", env="JWT_SECRET")
@@ -100,7 +109,7 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings():
     return Settings()
 
 settings = get_settings()

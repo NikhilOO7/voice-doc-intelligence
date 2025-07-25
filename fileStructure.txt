@@ -1,0 +1,75 @@
+.
+├── apps
+│   ├── api
+│   │   ├── core
+│   │   │   ├── config.py
+│   │   │   ├── connections.py
+│   │   │   └── database.py
+│   │   ├── main.py
+│   │   ├── models
+│   │   │   └── document.py
+│   │   ├── services
+│   │   │   ├── agents
+│   │   │   │   └── crew_setup.py
+│   │   │   ├── document
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── embeddings.py
+│   │   │   │   ├── processor.py
+│   │   │   │   └── vector_store.py
+│   │   │   ├── rag
+│   │   │   │   └── llamaindex_service.py
+│   │   │   └── voice
+│   │   │       ├── __init__.py
+│   │   │       └── livekit_service.py
+│   │   └── uploads
+│   ├── web
+│   │   ├── README.md
+│   │   ├── astro.config.mjs
+│   │   ├── package.json
+│   │   ├── postcss.config.js
+│   │   ├── public
+│   │   │   └── favicon.svg
+│   │   ├── src
+│   │   │   ├── components
+│   │   │   │   ├── DocumentList.tsx
+│   │   │   │   ├── DocumentUpload.tsx
+│   │   │   │   └── VoiceInterface.tsx
+│   │   │   ├── layouts
+│   │   │   │   └── Layout.astro
+│   │   │   ├── pages
+│   │   │   │   └── index.astro
+│   │   │   └── styles
+│   │   │       └── global.css
+│   │   ├── tailwind.config.js
+│   │   ├── tailwind.config.mjs
+│   │   └── tsconfig.json
+│   └── workers
+│       └── voice_agent_worker.py
+├── data
+│   ├── embeddings
+│   ├── metadata
+│   ├── models
+│   ├── processed
+│   └── raw
+├── fileStructure.txt
+├── infrastructure
+│   ├── configs
+│   ├── docker
+│   ├── local
+│   │   ├── docker-compose.yml
+│   │   └── init-db.sql
+│   └── pulumi
+│       └── __main__.py
+├── package.json
+├── pnpm-lock.yaml
+├── pnpm-workspace.yaml
+├── project-structure.txt
+├── pyproject.toml
+├── scripts
+│   ├── dev.sh
+│   ├── setup.sh
+│   ├── start-day1-2.sh
+│   └── test_day1_2.py
+└── uploads
+
+32 directories, 41 files

@@ -1,35 +1,127 @@
-# apps/api/services/document/embeddings.py
+"""
+Enhanced Embedding Service combining original and new contextual embedding capabilities
+"""
+
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
+from functools import lru_cache
+
+# Original imports
+from openai import OpenAI
+
+# Enhanced imports  
 from openai import AsyncOpenAI
 import voyageai
 from sentence_transformers import SentenceTransformer
 import torch
-import logging
-from functools import lru_cache
 
-from ...core.config import settings
-from ...core.connections import connections
+from apps.api.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+class EmbeddingService:
+    """Original embedding service for backward compatibility"""
+    
+    def __init__(self):
+        self.client = OpenAI(api_key=settings.openai_api_key)
+        self.model = settings.embedding_model
+        
+    async def generate_embedding(self, text: str, context: Optional[Dict] = None) -> List[float]:
+        """Original generate_embedding method - preserved exactly"""
+        try:
+            # Enhance text with context if provided
+            enhanced_text = self._enhance_with_context(text, context)
+            
+            # Generate embedding
+            response = await asyncio.to_thread(
+                self.client.embeddings.create,
+                model=self.model,
+                input=enhanced_text
+            )
+            
+            embedding = response.data[0].embedding
+            logger.debug(f"Generated embedding of dimension {len(embedding)}")
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            raise
+    
+    async def generate_batch_embeddings(self, texts: List[str], contexts: Optional[List[Dict]] = None) -> List[List[float]]:
+        """Original batch embedding generation - preserved exactly"""
+        try:
+            # Enhance texts with contexts
+            enhanced_texts = []
+            for i, text in enumerate(texts):
+                context = contexts[i] if contexts and i < len(contexts) else None
+                enhanced_texts.append(self._enhance_with_context(text, context))
+            
+            # Generate embeddings in batch
+            response = await asyncio.to_thread(
+                self.client.embeddings.create,
+                model=self.model,
+                input=enhanced_texts
+            )
+            
+            embeddings = [data.embedding for data in response.data]
+            logger.info(f"Generated {len(embeddings)} embeddings")
+            
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"Batch embedding generation failed: {e}")
+            raise
+    
+    def _enhance_with_context(self, text: str, context: Optional[Dict] = None) -> str:
+        """Original context enhancement - preserved exactly"""
+        if not context:
+            return text
+        
+        # Add context prefixes to help with embedding quality
+        enhanced_parts = []
+        
+        # Add document type context
+        if context.get('document_type'):
+            enhanced_parts.append(f"[Document: {context['document_type']}]")
+        
+        # Add section context
+        if context.get('section'):
+            enhanced_parts.append(f"[Section: {context['section']}]")
+        
+        # Add topic context
+        if context.get('topic'):
+            enhanced_parts.append(f"[Topic: {context['topic']}]")
+        
+        # Combine with original text
+        if enhanced_parts:
+            return " ".join(enhanced_parts) + " " + text
+        
+        return text
+
+
 class ContextualEmbeddingGenerator:
-    """Generate multi-level contextual embeddings using multiple models"""
+    """Enhanced embedding generator with multi-model support"""
     
     def __init__(self):
         # Initialize OpenAI client
         self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         
         # Initialize Voyage AI client (better embeddings)
-        if settings.voyage_api_key:
+        if getattr(settings, 'voyage_api_key', None):
             self.voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
         else:
             self.voyage_client = None
         
         # Local model for fallback and comparison
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.local_model = SentenceTransformer('all-MiniLM-L6-v2').to(self.device)
+        try:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.local_model = SentenceTransformer('all-MiniLM-L6-v2').to(self.device)
+        except Exception as e:
+            logger.warning(f"Local model initialization failed: {e}")
+            self.local_model = None
         
         # Cache for embeddings
         self._embedding_cache = {}
@@ -60,144 +152,96 @@ class ContextualEmbeddingGenerator:
     async def _process_batch(
         self,
         batch: List[Dict[str, Any]],
-        start_idx: int,
+        batch_start_idx: int,
         all_chunks: List[Dict[str, Any]],
         document_context: str,
         use_voyage: bool
     ) -> List[Dict[str, Any]]:
         """Process a batch of chunks"""
-        results = []
+        batch_results = []
         
-        for idx, chunk in enumerate(batch):
-            chunk_idx = start_idx + idx
+        for chunk_idx, chunk in enumerate(batch):
+            absolute_idx = batch_start_idx + chunk_idx
             
-            # Create contexts
-            local_context = self._create_local_context(all_chunks, chunk_idx)
-            global_context = self._create_global_context(all_chunks, document_context)
-            semantic_context = await self._create_semantic_context(chunk, all_chunks)
+            # Create multi-level contexts
+            contexts = {
+                "local": self._create_local_context(chunk, all_chunks, absolute_idx),
+                "document": document_context,
+                "global": await self._create_global_context(chunk, document_context),
+                "semantic": await self._extract_semantic_context(chunk)
+            }
             
             # Generate embeddings for each context level
             embeddings = {}
+            for context_type, context_text in contexts.items():
+                combined_text = f"{context_text} {chunk['content']}"
+                embedding_result = await self._generate_embedding(combined_text, use_voyage)
+                embeddings[context_type] = embedding_result
             
-            # Base embedding (just the chunk)
-            embeddings["base"] = await self._generate_embedding(
-                chunk["content"], use_voyage=use_voyage
-            )
-            
-            # Local context embedding
-            local_text = f"Local context: {local_context}\n\nContent: {chunk['content']}"
-            embeddings["local"] = await self._generate_embedding(
-                local_text, use_voyage=use_voyage
-            )
-            
-            # Document context embedding
-            doc_text = f"Document: {document_context}\n\nContent: {chunk['content']}"
-            embeddings["document"] = await self._generate_embedding(
-                doc_text, use_voyage=use_voyage
-            )
-            
-            # Global context embedding
-            global_text = f"Global context: {global_context}\n\nContent: {chunk['content']}"
-            embeddings["global"] = await self._generate_embedding(
-                global_text, use_voyage=use_voyage
-            )
-            
-            # Semantic context embedding
-            semantic_text = f"Related concepts: {semantic_context}\n\nContent: {chunk['content']}"
-            embeddings["semantic"] = await self._generate_embedding(
-                semantic_text, use_voyage=use_voyage
-            )
-            
-            results.append({
-                "chunk_index": chunk_idx,
+            # Create result
+            batch_results.append({
+                "chunk_index": chunk.get("chunk_index", absolute_idx),
                 "chunk_content": chunk["content"],
                 "embeddings": embeddings,
-                "contexts": {
-                    "local": local_context,
-                    "document": document_context,
-                    "global": global_context,
-                    "semantic": semantic_context
-                },
+                "contexts": contexts,
                 "metadata": chunk.get("metadata", {})
             })
         
-        return results
-    
-    def _create_local_context(
-        self,
-        chunks: List[Dict[str, Any]],
-        current_idx: int,
-        window_size: int = 2
-    ) -> str:
-        """Create context from surrounding chunks"""
-        contexts = []
-        
-        # Previous chunks
-        for i in range(max(0, current_idx - window_size), current_idx):
-            preview = chunks[i]["content"][:150] + "..." if len(chunks[i]["content"]) > 150 else chunks[i]["content"]
-            contexts.append(f"[Previous {current_idx - i}]: {preview}")
-        
-        # Next chunks
-        for i in range(current_idx + 1, min(len(chunks), current_idx + window_size + 1)):
-            preview = chunks[i]["content"][:150] + "..." if len(chunks[i]["content"]) > 150 else chunks[i]["content"]
-            contexts.append(f"[Next {i - current_idx}]: {preview}")
-        
-        return "\n".join(contexts)
+        return batch_results
     
     def _create_document_context(self, metadata: Dict[str, Any]) -> str:
-        """Create context from document metadata"""
-        parts = [
-            f"Document: {metadata.get('filename', 'Unknown')}",
-            f"Type: {metadata.get('file_type', 'Unknown')}",
-            f"Size: {metadata.get('file_size', 0):,} bytes"
-        ]
+        """Create document-level context"""
+        context_parts = []
         
-        if "structure" in metadata:
-            struct = metadata["structure"]
-            parts.append(f"Structure: {struct.get('heading_count', 0)} headings, {struct.get('table_count', 0)} tables")
+        if metadata.get("title"):
+            context_parts.append(f"Document: {metadata['title']}")
         
-        if "extracted_metadata" in metadata:
-            extracted = metadata["extracted_metadata"]
-            if "title" in extracted:
-                parts.insert(0, f"Title: {extracted['title']}")
-            if "author" in extracted:
-                parts.append(f"Author: {extracted['author']}")
+        if metadata.get("processing_method"):
+            context_parts.append(f"Type: document")
         
-        return " | ".join(parts)
+        return " | ".join(context_parts)
     
-    def _create_global_context(
-        self,
-        chunks: List[Dict[str, Any]],
+    def _create_local_context(
+        self, 
+        chunk: Dict[str, Any], 
+        all_chunks: List[Dict[str, Any]], 
+        chunk_idx: int
+    ) -> str:
+        """Create local context from neighboring chunks"""
+        context_parts = []
+        
+        # Previous chunk context
+        if chunk_idx > 0:
+            prev_content = all_chunks[chunk_idx - 1]["content"]
+            context_parts.append(f"Previous: {prev_content[-100:]}")
+        
+        # Next chunk context
+        if chunk_idx < len(all_chunks) - 1:
+            next_content = all_chunks[chunk_idx + 1]["content"]
+            context_parts.append(f"Next: {next_content[:100]}")
+        
+        return " | ".join(context_parts)
+    
+    async def _create_global_context(
+        self, 
+        chunk: Dict[str, Any], 
         document_context: str
     ) -> str:
-        """Create global context summary"""
-        # Use first and last chunks for global overview
-        parts = [document_context]
-        
-        if chunks:
-            first_preview = chunks[0]["content"][:200] + "..." if len(chunks[0]["content"]) > 200 else chunks[0]["content"]
-            parts.append(f"Document begins: {first_preview}")
-            
-            if len(chunks) > 1:
-                last_preview = chunks[-1]["content"][:200] + "..." if len(chunks[-1]["content"]) > 200 else chunks[-1]["content"]
-                parts.append(f"Document ends: {last_preview}")
-        
-        return " | ".join(parts)
+        """Create global context"""
+        # For now, use document context
+        # In a full implementation, this would consider other documents
+        return document_context
     
-    async def _create_semantic_context(
-        self,
-        chunk: Dict[str, Any],
-        all_chunks: List[Dict[str, Any]]
-    ) -> str:
-        """Create semantic context using LLM to identify related concepts"""
+    async def _extract_semantic_context(self, chunk: Dict[str, Any]) -> str:
+        """Extract semantic context using AI or keywords"""
         try:
-            # Extract key concepts using LLM
+            # Use OpenAI for semantic analysis
             response = await self.openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
                         "role": "system",
-                        "content": "Extract 3-5 key concepts or topics from the text. Return only the concepts separated by commas."
+                        "content": "Extract 3-5 key concepts from this text. Return only the concepts separated by commas."
                     },
                     {
                         "role": "user",
@@ -248,7 +292,7 @@ class ContextualEmbeddingGenerator:
             try:
                 result = self.voyage_client.embed(
                     texts=[text],
-                    model=settings.voyage_model,  # voyage-3-large
+                    model=getattr(settings, 'voyage_model', 'voyage-3-large'),
                     input_type="document"
                 )
                 embeddings["voyage"] = result.embeddings[0]
@@ -257,56 +301,15 @@ class ContextualEmbeddingGenerator:
                 embeddings["voyage"] = None
         
         # Always generate local embedding as fallback
-        local_embedding = self.local_model.encode(text, convert_to_tensor=True)
-        embeddings["local"] = local_embedding.cpu().numpy().tolist()
+        if self.local_model:
+            try:
+                local_embedding = self.local_model.encode(text, convert_to_tensor=True)
+                embeddings["local"] = local_embedding.cpu().numpy().tolist()
+            except Exception as e:
+                logger.warning(f"Local embedding failed: {e}")
+                embeddings["local"] = None
         
-        # Cache the result
+        # Cache result
         self._embedding_cache[cache_key] = embeddings
         
         return embeddings
-    
-    async def generate_query_embedding(
-        self,
-        query: str,
-        enhance: bool = True
-    ) -> Dict[str, Any]:
-        """Generate embedding for search query with enhancement"""
-        enhanced_query = query
-        
-        if enhance:
-            enhanced_query = await self._enhance_query(query)
-        
-        # Generate embeddings with all models
-        embeddings = await self._generate_embedding(enhanced_query, use_voyage=True)
-        
-        return {
-            "original_query": query,
-            "enhanced_query": enhanced_query,
-            "embeddings": embeddings
-        }
-    
-    async def _enhance_query(self, query: str) -> str:
-        """Enhance query using LLM for better retrieval"""
-        try:
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a search query enhancer. Add relevant synonyms, related terms, and clarifications to improve search results. Keep it concise."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Enhance this search query: {query}"
-                    }
-                ],
-                max_tokens=150,
-                temperature=0.5
-            )
-            
-            enhanced = response.choices[0].message.content.strip()
-            return f"{query} {enhanced}"
-            
-        except Exception as e:
-            logger.error(f"Query enhancement failed: {e}")
-            return query
