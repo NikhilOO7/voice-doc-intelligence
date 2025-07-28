@@ -1,404 +1,489 @@
 // apps/web/src/components/VoiceInterface.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { 
+  Mic, 
+  MicOff, 
+  Volume2, 
+  Loader, 
+  AlertCircle,
+  CheckCircle,
+  Radio
+} from 'lucide-react';
 import { 
   Room, 
   RoomEvent, 
-  RemoteParticipant, 
-  RemoteTrackPublication,
-  RemoteTrack,
-  TrackKind
+  Track, 
+  RemoteTrack, 
+  LocalAudioTrack,
+  ConnectionState
 } from 'livekit-client';
 
-interface VoiceInterfaceProps {
-  className?: string;
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  metadata?: {
+    context_level?: string;
+    sources?: Array<{
+      document_title: string;
+      section: string;
+      score: number;
+    }>;
+    latency_ms?: number;
+  };
 }
 
-interface RoomInfo {
-  room_name: string;
-  token: string;
-  url: string;
-  participant_name: string;
+interface VoiceMetrics {
+  sttLatency: number;
+  ttsLatency: number;
+  ragLatency: number;
+  totalLatency: number;
 }
 
-export default function VoiceInterface({ className = "" }: VoiceInterfaceProps) {
+export default function VoiceInterface() {
+  // State management
   const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [transcript, setTranscript] = useState<string[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [contextLevel, setContextLevel] = useState<'local' | 'document' | 'global'>('local');
+  const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
+  const [transcript, setTranscript] = useState('');
   
+  // LiveKit refs
   const roomRef = useRef<Room | null>(null);
-  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const audioTrackRef = useRef<LocalAudioTrack | null>(null);
+  const conversationIdRef = useRef<string>(`session-${Date.now()}`);
   
-  // Create audio element for playback
+  // UI refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const visualizerRef = useRef<HTMLCanvasElement>(null);
+  
+  // Scroll to bottom when new messages arrive
   useEffect(() => {
-    if (!audioElementRef.current) {
-      audioElementRef.current = document.createElement('audio');
-      audioElementRef.current.autoplay = true;
-      audioElementRef.current.controls = false;
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+  
+  // Initialize LiveKit connection
+  useEffect(() => {
+    initializeLiveKit();
+    
+    return () => {
+      disconnectLiveKit();
+    };
   }, []);
   
-  const createVoiceRoom = async (): Promise<RoomInfo> => {
-    const response = await fetch('/api/v1/voice/create-room', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        participant_name: 'User'
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to create voice room');
-    }
-    
-    return await response.json();
-  };
-  
-  const connectToVoice = async () => {
-    if (isConnected || isConnecting) return;
-    
-    setIsConnecting(true);
-    setError(null);
-    
+  const initializeLiveKit = async () => {
     try {
-      // Create room and get connection info
-      const roomInfo = await createVoiceRoom();
+      // Get token from backend
+      const response = await fetch('/api/v1/voice/token');
+      const { token, url } = await response.json();
       
-      // Create and connect to LiveKit room
+      // Create room
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
-        publishDefaults: {
-          audioPreset: {
-            maxBitrate: 64000,
-          }
-        }
+        videoCaptureDefaults: {
+          resolution: { width: 0, height: 0 }, // Audio only
+        },
       });
       
-      roomRef.current = room;
-      
-      // Set up event listeners
+      // Set up event handlers
       room.on(RoomEvent.Connected, () => {
-        console.log('Connected to voice room');
+        console.log('Connected to LiveKit room');
         setIsConnected(true);
-        setIsConnecting(false);
-        addTranscript('🎙️ Connected to voice assistant. You can start speaking!');
+        setError(null);
       });
       
       room.on(RoomEvent.Disconnected, () => {
-        console.log('Disconnected from voice room');
+        console.log('Disconnected from LiveKit room');
         setIsConnected(false);
-        setIsConnecting(false);
-        addTranscript('❌ Disconnected from voice assistant');
       });
       
-      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-        console.log('Agent joined:', participant.identity);
-        addTranscript('🤖 Voice assistant joined the conversation');
+      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant: any) => {
+        // Handle data messages from the agent
+        const message = JSON.parse(new TextDecoder().decode(payload));
+        handleAgentMessage(message);
       });
       
       room.on(RoomEvent.TrackSubscribed, (
         track: RemoteTrack,
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant
+        publication: any,
+        participant: any
       ) => {
-        if (track.kind === TrackKind.Audio && audioElementRef.current) {
-          track.attach(audioElementRef.current);
-          console.log('Subscribed to agent audio track');
+        // Handle incoming audio from agent
+        if (track.kind === Track.Kind.Audio) {
+          const audioElement = new Audio();
+          track.attach(audioElement);
+          audioElement.play();
+          setIsSpeaking(true);
         }
       });
       
-      // Handle transcriptions (if supported)
-      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
-        try {
-          const data = JSON.parse(new TextDecoder().decode(payload));
-          if (data.type === 'transcription') {
-            const speaker = participant?.identity === 'agent' ? '🤖 Assistant' : '👤 You';
-            addTranscript(`${speaker}: ${data.text}`);
-          }
-        } catch (e) {
-          // Ignore invalid JSON
+      room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+        if (track.kind === Track.Kind.Audio) {
+          track.detach();
+          setIsSpeaking(false);
         }
       });
       
-      room.on(RoomEvent.ConnectionStateChanged, (state) => {
-        console.log('Connection state changed:', state);
-        if (state === 'failed' || state === 'disconnected') {
-          setError('Connection lost. Please try reconnecting.');
-          setIsConnected(false);
-          setIsConnecting(false);
+      room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+        console.log('Connection state:', state);
+        if (state === ConnectionState.Reconnecting) {
+          setError('Reconnecting...');
         }
       });
       
-      // Connect to the room
-      await room.connect(roomInfo.url, roomInfo.token);
+      // Connect to room
+      await room.connect(url, token);
+      roomRef.current = room;
       
-      // Enable microphone
-      await room.localParticipant.enableMicrophone(true);
+      // Initialize audio context for visualization
+      audioContextRef.current = new AudioContext();
       
     } catch (err) {
-      console.error('Failed to connect:', err);
-      setError(err instanceof Error ? err.message : 'Failed to connect to voice assistant');
-      setIsConnecting(false);
+      console.error('Failed to connect to LiveKit:', err);
+      setError('Failed to connect to voice service');
+      setIsConnected(false);
     }
   };
   
-  const disconnectFromVoice = async () => {
+  const disconnectLiveKit = async () => {
     if (roomRef.current) {
       await roomRef.current.disconnect();
       roomRef.current = null;
     }
-    setIsConnected(false);
-    setIsConnecting(false);
-  };
-  
-  const addTranscript = (message: string) => {
-    setTranscript(prev => [...prev.slice(-9), message]); // Keep last 10 messages
-  };
-  
-  // Toggle microphone
-  const toggleMicrophone = async () => {
-    if (roomRef.current) {
-      const enabled = roomRef.current.localParticipant.isMicrophoneEnabled;
-      await roomRef.current.localParticipant.enableMicrophone(!enabled);
+    if (audioTrackRef.current) {
+      audioTrackRef.current.stop();
+      audioTrackRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
     }
   };
   
-  // Check if microphone is enabled
-  const isMicrophoneEnabled = roomRef.current?.localParticipant.isMicrophoneEnabled ?? false;
+  const handleAgentMessage = (message: any) => {
+    switch (message.type) {
+      case 'transcript':
+        setTranscript(message.text);
+        break;
+      case 'response':
+        addMessage('assistant', message.content, message.metadata);
+        setMetrics(message.metrics);
+        break;
+      case 'error':
+        setError(message.error);
+        break;
+      case 'processing':
+        setIsProcessing(message.isProcessing);
+        break;
+    }
+  };
+  
+  const startRecording = async () => {
+    try {
+      if (!roomRef.current || !isConnected) {
+        setError('Not connected to voice service');
+        return;
+      }
+      
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+      
+      // Create and publish audio track
+      audioTrackRef.current = new LocalAudioTrack(stream.getAudioTracks()[0]);
+      await roomRef.current.localParticipant.publishTrack(audioTrackRef.current);
+      
+      setIsRecording(true);
+      setError(null);
+      setTranscript('');
+      
+      // Start visualization
+      if (visualizerRef.current && audioContextRef.current) {
+        visualizeAudio(stream);
+      }
+      
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+      setError('Failed to access microphone');
+    }
+  };
+  
+  const stopRecording = async () => {
+    if (audioTrackRef.current && roomRef.current) {
+      roomRef.current.localParticipant.unpublishTrack(audioTrackRef.current);
+      audioTrackRef.current.stop();
+      audioTrackRef.current = null;
+    }
+    setIsRecording(false);
+    
+    // Send the transcript for processing
+    if (transcript && roomRef.current) {
+      setIsProcessing(true);
+      addMessage('user', transcript);
+      
+      // Send query with context level
+      const encoder = new TextEncoder();
+      const data = encoder.encode(JSON.stringify({
+        type: 'query',
+        text: transcript,
+        context_level: contextLevel,
+        conversation_id: conversationIdRef.current
+      }));
+      
+      await roomRef.current.localParticipant.publishData(
+        data,
+        { reliable: true }
+      );
+    }
+  };
+  
+  const visualizeAudio = (stream: MediaStream) => {
+    if (!audioContextRef.current || !visualizerRef.current) return;
+    
+    const source = audioContextRef.current.createMediaStreamSource(stream);
+    const analyser = audioContextRef.current.createAnalyser();
+    analyser.fftSize = 256;
+    
+    source.connect(analyser);
+    
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const canvas = visualizerRef.current;
+    const canvasCtx = canvas.getContext('2d')!;
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+    
+    function draw() {
+      if (!isRecording) return;
+      
+      requestAnimationFrame(draw);
+      
+      analyser.getByteFrequencyData(dataArray);
+      
+      canvasCtx.fillStyle = 'rgb(249, 250, 251)';
+      canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+      
+      const barWidth = (WIDTH / bufferLength) * 2.5;
+      let barHeight;
+      let x = 0;
+      
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = (dataArray[i] / 255) * HEIGHT;
+        
+        const r = 59;
+        const g = 130;
+        const b = 246;
+        
+        canvasCtx.fillStyle = `rgb(${r},${g},${b})`;
+        canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+        
+        x += barWidth + 1;
+      }
+    }
+    
+    draw();
+  };
+  
+  const addMessage = (role: 'user' | 'assistant', content: string, metadata?: any) => {
+    const newMessage: Message = {
+      id: `msg-${Date.now()}`,
+      role,
+      content,
+      timestamp: new Date(),
+      metadata
+    };
+    setMessages(prev => [...prev, newMessage]);
+  };
+  
+  const sendQuickAction = async (query: string) => {
+    if (!roomRef.current || !isConnected) {
+      setError('Not connected to voice service');
+      return;
+    }
+    
+    addMessage('user', query);
+    setIsProcessing(true);
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify({
+      type: 'query',
+      text: query,
+      context_level: contextLevel,
+      conversation_id: conversationIdRef.current
+    }));
+    
+    await roomRef.current.localParticipant.publishData(
+      data,
+      { reliable: true }
+    );
+  };
   
   return (
-    <div className={`voice-interface ${className}`}>
-      <div className="voice-controls">
-        <div className="connection-status">
-          {isConnecting ? (
-            <div className="status connecting">
-              <div className="spinner"></div>
-              <span>Connecting...</span>
-            </div>
-          ) : isConnected ? (
-            <div className="status connected">
-              <div className="pulse-dot"></div>
-              <span>Voice Assistant Ready</span>
-            </div>
-          ) : (
-            <div className="status disconnected">
-              <div className="offline-dot"></div>
-              <span>Not Connected</span>
-            </div>
-          )}
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-3">
+          <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+          <span className="text-sm text-gray-600">
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </span>
         </div>
         
-        <div className="voice-buttons">
-          {!isConnected ? (
-            <button 
-              onClick={connectToVoice}
-              disabled={isConnecting}
-              className="connect-btn"
-            >
-              {isConnecting ? 'Connecting...' : '🎙️ Start Voice Chat'}
-            </button>
-          ) : (
-            <div className="active-controls">
-              <button 
-                onClick={toggleMicrophone}
-                className={`mic-btn ${isMicrophoneEnabled ? 'enabled' : 'disabled'}`}
-              >
-                {isMicrophoneEnabled ? '🎤' : '🎤❌'}
-              </button>
-              
-              <button 
-                onClick={disconnectFromVoice}
-                className="disconnect-btn"
-              >
-                ❌ End Chat
-              </button>
-            </div>
-          )}
-        </div>
+        {metrics && (
+          <div className="text-xs text-gray-500">
+            Latency: {metrics.totalLatency.toFixed(0)}ms
+          </div>
+        )}
       </div>
       
-      {error && (
-        <div className="error-message">
-          ⚠️ {error}
-          <button onClick={() => setError(null)} className="close-error">×</button>
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto mb-4 space-y-3">
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                message.role === 'user'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-800'
+              }`}
+            >
+              <p className="text-sm">{message.content}</p>
+              
+              {message.metadata?.sources && (
+                <div className="mt-2 pt-2 border-t border-gray-200">
+                  <p className="text-xs font-medium mb-1">Sources:</p>
+                  {message.metadata.sources.map((source, idx) => (
+                    <div key={idx} className="text-xs opacity-75">
+                      • {source.document_title} - {source.section}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        
+        {isProcessing && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 rounded-lg px-4 py-2 flex items-center space-x-2">
+              <Loader className="w-4 h-4 animate-spin" />
+              <span className="text-sm text-gray-600">Thinking...</span>
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      {/* Transcript Display */}
+      {transcript && (
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <p className="text-sm text-gray-600">{transcript}</p>
         </div>
       )}
       
-      {isConnected && (
-        <div className="conversation-transcript">
-          <h3>Conversation</h3>
-          <div className="transcript-messages">
-            {transcript.map((message, index) => (
-              <div key={index} className="transcript-message">
-                {message}
-              </div>
-            ))}
-          </div>
+      {/* Audio Visualizer */}
+      <canvas
+        ref={visualizerRef}
+        width={300}
+        height={60}
+        className={`w-full h-16 mb-4 ${isRecording ? 'block' : 'hidden'}`}
+      />
+      
+      {/* Context Level Selector */}
+      <div className="flex items-center justify-center space-x-4 mb-4">
+        {(['local', 'document', 'global'] as const).map((level) => (
+          <label key={level} className="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="radio"
+              name="context"
+              value={level}
+              checked={contextLevel === level}
+              onChange={(e) => setContextLevel(e.target.value as any)}
+              className="text-blue-600"
+            />
+            <span className="text-sm capitalize text-gray-700">{level}</span>
+          </label>
+        ))}
+      </div>
+      
+      {/* Voice Controls */}
+      <div className="flex flex-col items-center space-y-4">
+        <button
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={!isConnected || isProcessing}
+          className={`relative w-20 h-20 rounded-full flex items-center justify-center transition-all transform hover:scale-105 ${
+            isRecording
+              ? 'bg-red-500 hover:bg-red-600'
+              : 'bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700'
+          } ${(!isConnected || isProcessing) ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          {isRecording ? (
+            <MicOff className="w-8 h-8 text-white" />
+          ) : (
+            <Mic className="w-8 h-8 text-white" />
+          )}
           
-          <div className="voice-tips">
-            <p><strong>💡 Try saying:</strong></p>
-            <ul>
-              <li>"Search for safety protocols"</li>
-              <li>"What documents do I have?"</li>
-              <li>"Summarize the latest report"</li>
-              <li>"Find information about project requirements"</li>
-            </ul>
+          {isRecording && (
+            <span className="absolute inset-0 rounded-full border-4 border-red-400 animate-ping" />
+          )}
+        </button>
+        
+        {error && (
+          <div className="flex items-center space-x-2 text-red-600 text-sm">
+            <AlertCircle className="w-4 h-4" />
+            <span>{error}</span>
           </div>
-        </div>
-      )}
+        )}
+        
+        {isSpeaking && (
+          <div className="flex items-center space-x-2 text-blue-600 text-sm">
+            <Volume2 className="w-4 h-4" />
+            <span>Assistant is speaking...</span>
+          </div>
+        )}
+      </div>
       
-      <style jsx>{`
-        .voice-interface {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          border-radius: 12px;
-          padding: 24px;
-          color: white;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-        
-        .voice-controls {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 20px;
-        }
-        
-        .status {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-weight: 500;
-        }
-        
-        .pulse-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #4ade80;
-          animation: pulse 2s infinite;
-        }
-        
-        .offline-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #ef4444;
-        }
-        
-        .spinner {
-          width: 12px;
-          height: 12px;
-          border: 2px solid rgba(255,255,255,0.3);
-          border-top: 2px solid white;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-        
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        
-        .voice-buttons button {
-          background: rgba(255,255,255,0.2);
-          border: 1px solid rgba(255,255,255,0.3);
-          color: white;
-          padding: 10px 20px;
-          border-radius: 8px;
-          cursor: pointer;
-          font-weight: 500;
-          transition: all 0.2s;
-        }
-        
-        .voice-buttons button:hover:not(:disabled) {
-          background: rgba(255,255,255,0.3);
-          transform: translateY(-1px);
-        }
-        
-        .voice-buttons button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-        
-        .active-controls {
-          display: flex;
-          gap: 12px;
-        }
-        
-        .mic-btn.enabled {
-          background: rgba(74, 222, 128, 0.3);
-          border-color: rgba(74, 222, 128, 0.5);
-        }
-        
-        .mic-btn.disabled {
-          background: rgba(239, 68, 68, 0.3);
-          border-color: rgba(239, 68, 68, 0.5);
-        }
-        
-        .error-message {
-          background: rgba(239, 68, 68, 0.2);
-          border: 1px solid rgba(239, 68, 68, 0.3);
-          padding: 12px;
-          border-radius: 8px;
-          margin-bottom: 16px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        
-        .close-error {
-          background: none;
-          border: none;
-          color: white;
-          cursor: pointer;
-          font-size: 18px;
-          padding: 0;
-        }
-        
-        .conversation-transcript {
-          background: rgba(255,255,255,0.1);
-          border-radius: 8px;
-          padding: 16px;
-        }
-        
-        .transcript-messages {
-          max-height: 200px;
-          overflow-y: auto;
-          margin-bottom: 16px;
-          border-bottom: 1px solid rgba(255,255,255,0.2);
-          padding-bottom: 16px;
-        }
-        
-        .transcript-message {
-          margin-bottom: 8px;
-          padding: 6px 0;
-          opacity: 0.9;
-          line-height: 1.4;
-        }
-        
-        .voice-tips {
-          opacity: 0.8;
-          font-size: 14px;
-        }
-        
-        .voice-tips ul {
-          margin: 8px 0 0 0;
-          padding-left: 20px;
-        }
-        
-        .voice-tips li {
-          margin-bottom: 4px;
-        }
-      `}</style>
+      {/* Quick Actions */}
+      <div className="mt-6 space-y-2">
+        <p className="text-xs text-gray-500 text-center">Quick actions:</p>
+        <div className="flex flex-wrap gap-2 justify-center">
+          <button
+            onClick={() => sendQuickAction("What documents do I have?")}
+            className="text-xs px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full"
+          >
+            List documents
+          </button>
+          <button
+            onClick={() => sendQuickAction("Summarize recent uploads")}
+            className="text-xs px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full"
+          >
+            Recent summary
+          </button>
+          <button
+            onClick={() => sendQuickAction("Find action items")}
+            className="text-xs px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full"
+          >
+            Action items
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

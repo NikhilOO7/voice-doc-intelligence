@@ -1,0 +1,47 @@
+{
+  "dashboard": {
+    "title": "Voice Pipeline Metrics",
+    "panels": [
+      {
+        "title": "End-to-End Latency",
+        "targets": [
+          {
+            "expr": "voice_pipeline_latency_seconds{job='voice-assistant'}"
+          }
+        ]
+      },
+      {
+        "title": "STT Latency (Deepgram)",
+        "targets": [
+          {
+            "expr": "stt_processing_latency_seconds{provider='deepgram'}"
+          }
+        ]
+      },
+      {
+        "title": "TTS Latency (Cartesia)",
+        "targets": [
+          {
+            "expr": "tts_generation_latency_seconds{provider='cartesia'}"
+          }
+        ]
+      },
+      {
+        "title": "Concurrent Sessions",
+        "targets": [
+          {
+            "expr": "voice_concurrent_sessions"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "rate(voice_pipeline_errors_total[5m])"
+          }
+        ]
+      }
+    ]
+  }
+}

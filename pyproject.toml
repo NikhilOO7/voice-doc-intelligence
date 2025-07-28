@@ -2,11 +2,11 @@
 name = "voice-doc-intelligence"
 version = "0.1.0"
 description = "Voice-enabled document intelligence system"
-authors = ["Your Name <email@example.com>"]
+authors = ["Nikhil Bindal <nikhil.bindal@outlook.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.13"
 # Core Framework
 fastapi = "^0.111.0"
 uvicorn = {extras = ["standard"], version = "^0.30.0"}
@@ -16,31 +16,27 @@ pydantic-settings = "^2.3.0"
 # AI/LLM Orchestration
 llama-index = "^0.10.50"
 llama-index-vector-stores-qdrant = "^0.2.8"
-llama-index-graph-stores-tigerdb = "^0.1.0"
-crewai = "^0.30.0"
-onprem = "^0.0.30"
+crewai = "^0.150.0"
+onprem = "^0.16.3"
 vellum-ai = "^0.3.0"
 
 # Vector/Graph Databases
 qdrant-client = "^1.10.0"
 pyTigerGraph = "^1.5.0"
-tigergraph-mlworkbench = "^1.2.0"
+tigergraph-mlworkbench = "^1.0.0"
 
 # Voice Processing
 openai = "^1.35.0"
-cartesia = "^0.1.0"
+deepgram-sdk = "^3.2.0"  # Deepgram Nova-3 SDK
+cartesia = "^1.0.0"  # Cartesia Sonic TTS
+livekit = "^1.0.3"  # Updated to match livekit-agents requirement
 
 # LiveKit Agents for Voice AI
 livekit-agents = {extras = ["openai", "silero", "deepgram", "cartesia", "turn-detector"], version = "^1.0.0"}
-livekit = "^0.11.0"
-livekit-plugins-openai = "^0.5.0"
-livekit-plugins-deepgram = "^0.6.0"
-livekit-plugins-silero = "^0.5.0"
-livekit-plugins-cartesia = "^0.1.0"
 
 # Additional voice processing
 webrtcvad = "^2.0.10"
-sounddevice = "^0.4.6"
+sounddevice = "^0.5.0"  # Updated to match livekit-agents requirement
 pyaudio = "^0.2.11"
 
 # Document Processing
@@ -63,13 +59,13 @@ redis = "^5.0.0"
 motor = "^3.4.0"
 
 # Security
-ironcore-alloy = "^0.1.0"
+ironcore-alloy = "^0.13.0"
 cryptography = "^42.0.0"
 
 # Observability
 opentelemetry-api = "^1.25.0"
-opentelemetry-instrumentation-fastapi = "^0.46b0"
-prometheus-client = "^0.20.0"
+opentelemetry-instrumentation-fastapi = "^0.56b0"
+prometheus-client = "^0.22.0"  # Updated to match livekit-agents requirement
 
 # ML/Data
 numpy = "^1.26.0"

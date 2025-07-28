@@ -1,0 +1,90 @@
+# infrastructure/local/docker-compose-minimal.yml
+services:
+  # PostgreSQL for document metadata
+  postgres:
+    image: postgres:15-alpine
+    container_name: voice-doc-postgres
+    environment:
+      POSTGRES_USER: voicedoc
+      POSTGRES_PASSWORD: voicedoc123
+      POSTGRES_DB: voice_doc_intel
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicedoc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and real-time features
+  redis:
+    image: redis:7-alpine
+    container_name: voice-doc-redis
+    command: redis-server --requirepass voicedoc123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "voicedoc123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant for vector storage
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: voice-doc-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=INFO
+
+  # MinIO for object storage
+  minio:
+    image: minio/minio:latest
+    container_name: voice-doc-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: voicedoc
+      MINIO_ROOT_PASSWORD: voicedoc123
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LiveKit server for voice
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: voice-doc-livekit
+    command: --dev
+    restart: unless-stopped
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882"
+    environment:
+      - LIVEKIT_KEYS=devkey:secret
+
+networks:
+  default:
+    name: voice-doc-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  minio_data:

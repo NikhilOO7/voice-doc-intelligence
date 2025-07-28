@@ -1,0 +1,60 @@
+# infrastructure/local/livekit.yaml
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: false
+
+redis:
+  address: redis-stack:6379
+  password: ${REDIS_PASSWORD}
+
+turn:
+  enabled: false
+
+room:
+  auto_create: true
+  empty_timeout: 300
+  max_participants: 100
+
+webhook:
+  urls: []
+
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+logging:
+  level: info
+  sample: false
+
+# Specific settings for voice agents
+agent:
+  enabled: true
+  default_timeout: 30
+  
+audio:
+  # Optimized for voice
+  active_speaker_update_interval: 500ms
+  smooth_intervals: true
+  
+  # Quality settings
+  default_capture_options:
+    echo_cancellation: true
+    noise_suppression: true
+    auto_gain_control: true
+    
+  # Opus codec settings for voice
+  opus:
+    bitrate: 32000
+    stereo: false
+    dtx: true  # Discontinuous transmission for voice
+    
+# Limit settings for voice-only usage
+limit:
+  num_tracks: 10  # Voice only needs fewer tracks
+  bytes_per_sec: 1_000_000  # 1MB/s is plenty for voice
+  
+# Security
+security:
+  enable_strict_mode: false  # Set to true in production

@@ -1,116 +1,189 @@
 # infrastructure/local/docker-compose.yml
-version: '3.9'
-
 services:
-  # TigerGraph - Hybrid Vector/Graph Database (2025 standard)
-  tigergraph:
-    image: docker.tigergraph.com/tigergraph:latest
-    ports:
-      - "14240:14240"  # GraphStudio
-      - "9000:9000"    # REST API
-      - "10000:10000"  # GSQL Server
-    environment:
-      - TIGERGRAPH_USERNAME=tigergraph
-      - TIGERGRAPH_PASSWORD=tigergraph123
-    volumes:
-      - tigergraph_data:/home/tigergraph/mydata
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Qdrant - High-performance Vector Database
-  qdrant:
-    image: qdrant/qdrant:v1.10.0
-    ports:
-      - "6333:6333"
-      - "6334:6334"  # gRPC port
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-      - QDRANT__SERVICE__HTTP_PORT=6333
-      - QDRANT__SERVICE__ENABLE_TLS=false
-    command: ["./qdrant", "--config-path", "/qdrant/config/config.yaml"]
-
-  # Redis Stack (includes RedisJSON, RedisGraph, RedisTimeSeries)
-  redis-stack:
-    image: redis/redis-stack:latest
-    ports:
-      - "6379:6379"
-      - "8001:8001"  # RedisInsight
-    volumes:
-      - redis_data:/data
-    environment:
-      - REDIS_ARGS=--appendonly yes --appendfsync everysec
-
-  # PostgreSQL with pgvector
+  # PostgreSQL for document metadata
   postgres:
-    image: pgvector/pgvector:pg16
-    ports:
-      - "5432:5432"
+    image: postgres:15-alpine
+    container_name: voice-doc-postgres
     environment:
-      - POSTGRES_USER=docintell
-      - POSTGRES_PASSWORD=docintell123
-      - POSTGRES_DB=document_intelligence
+      POSTGRES_USER: ${POSTGRES_USER:-voicedoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voicedoc123}
+      POSTGRES_DB: ${POSTGRES_DB:-voice_doc_intel}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voicedoc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Temporal for workflow orchestration
+  # Redis for caching and real-time features
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: voice-doc-redis
+    ports:
+      - "6379:6379"
+      - "8001:8001"  # RedisInsight
+    environment:
+      - REDIS_ARGS=--requirepass ${REDIS_PASSWORD:-voicedoc123}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-voicedoc123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant for vector storage
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: voice-doc-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO for object storage
+  minio:
+    image: minio/minio:latest
+    container_name: voice-doc-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-voicedoc}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-voicedoc123}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LiveKit server for voice
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: voice-doc-livekit
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    ports:
+      - "7880:7880"  # HTTP
+      - "7881:7881"  # RTC/TCP
+      - "50000-60000:50000-60000/udp"  # RTC/UDP
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    environment:
+      - LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}:${LIVEKIT_API_SECRET:-secret}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Temporal for workflow orchestration (optional)
   temporal:
     image: temporalio/auto-setup:latest
-    ports:
-      - "7233:7233"
+    container_name: voice-doc-temporal
+    depends_on:
+      - postgres
     environment:
       - DB=postgresql
       - DB_PORT=5432
-      - POSTGRES_USER=temporal
-      - POSTGRES_PWD=temporal
+      - POSTGRES_USER=${POSTGRES_USER:-voicedoc}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-voicedoc123}
       - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - temporal_data:/etc/temporal
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: voice-doc-temporal-ui
     depends_on:
-      - postgres
-
-  # Apache Pulsar for event streaming
-  pulsar:
-    image: apachepulsar/pulsar:3.2.0
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
     ports:
-      - "6650:6650"
       - "8080:8080"
-    volumes:
-      - pulsar_data:/pulsar/data
-    command: bin/pulsar standalone
 
-  # LiveKit for real-time voice
-  livekit:
-    image: livekit/livekit-server:v1.6
+  # TigerGraph for knowledge graph (optional)
+  tigergraph:
+    image: docker.tigergraph.com/tigergraph:latest
+    container_name: voice-doc-tigergraph
     ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
-    environment:
-      - LIVEKIT_KEYS=devkey:secret
-      - LIVEKIT_LOG_LEVEL=info
-    command: --dev --redis-host redis-stack:6379
-
-  # MinIO for object storage (S3 compatible)
-  minio:
-    image: minio/minio:latest
-    ports:
-      - "9001:9001"
-      - "9002:9002"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - "9000:9000"
+      - "14240:14240"  # GraphStudio
     volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9002"
+      - tigergraph_data:/home/tigergraph/mydata
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1000000
+    environment:
+      - TIGERGRAPH_USERNAME=${TIGERGRAPH_USERNAME:-tigergraph}
+      - TIGERGRAPH_PASSWORD=${TIGERGRAPH_PASSWORD:-tigergraph}
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: voice-doc-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: voice-doc-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+
+networks:
+  default:
+    name: voice-doc-network
 
 volumes:
-  tigergraph_data:
-  qdrant_data:
-  redis_data:
   postgres_data:
-  pulsar_data:
+  redis_data:
+  qdrant_data:
   minio_data:
+  temporal_data:
+  tigergraph_data:
+  prometheus_data:
+  grafana_data:
