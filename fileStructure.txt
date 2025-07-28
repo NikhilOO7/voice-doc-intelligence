@@ -8,18 +8,25 @@
 │   │   ├── main.py
 │   │   ├── models
 │   │   │   └── document.py
+│   │   ├── routers
+│   │   │   └── voice.py
 │   │   ├── services
 │   │   │   ├── agents
 │   │   │   │   └── crew_setup.py
 │   │   │   ├── document
 │   │   │   │   ├── __init__.py
+│   │   │   │   ├── contextual_processor.py
 │   │   │   │   ├── embeddings.py
 │   │   │   │   ├── processor.py
 │   │   │   │   └── vector_store.py
 │   │   │   ├── rag
 │   │   │   │   └── llamaindex_service.py
+│   │   │   ├── storage
+│   │   │   │   └── local_storage.py
 │   │   │   └── voice
 │   │   │       ├── __init__.py
+│   │   │       ├── enhanced_livekit_service.py
+│   │   │       ├── enhanced_voice_service.py
 │   │   │       └── livekit_service.py
 │   │   └── uploads
 │   ├── web
@@ -44,6 +51,7 @@
 │   │   ├── tailwind.config.mjs
 │   │   └── tsconfig.json
 │   └── workers
+│       ├── enhanced_voice_agent_worker.py
 │       └── voice_agent_worker.py
 ├── data
 │   ├── embeddings
@@ -56,8 +64,12 @@
 │   ├── configs
 │   ├── docker
 │   ├── local
+│   │   ├── docker-compose-minimal.yml
 │   │   ├── docker-compose.yml
-│   │   └── init-db.sql
+│   │   ├── init-db.sql
+│   │   └── livekit.yaml
+│   ├── monitoring
+│   │   └── voice_metrics_dashboard.json
 │   └── pulumi
 │       └── __main__.py
 ├── package.json
@@ -69,7 +81,8 @@
 │   ├── dev.sh
 │   ├── setup.sh
 │   ├── start-day1-2.sh
+│   ├── start-docker.sh
 │   └── test_day1_2.py
 └── uploads
 
-32 directories, 41 files
+35 directories, 51 files
