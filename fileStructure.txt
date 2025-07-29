@@ -6,13 +6,23 @@
 │   │   │   ├── connections.py
 │   │   │   └── database.py
 │   │   ├── main.py
+│   │   ├── main_updated.py
 │   │   ├── models
 │   │   │   └── document.py
 │   │   ├── routers
 │   │   │   └── voice.py
 │   │   ├── services
 │   │   │   ├── agents
-│   │   │   │   └── crew_setup.py
+│   │   │   │   ├── README.md
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── agent_coordinator.py
+│   │   │   │   ├── analytics_agent.py
+│   │   │   │   ├── base_agent.py
+│   │   │   │   ├── context_agent.py
+│   │   │   │   ├── crew_setup.py
+│   │   │   │   ├── document_agent.py
+│   │   │   │   ├── query_agent.py
+│   │   │   │   └── voice_agent.py
 │   │   │   ├── document
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── contextual_processor.py
@@ -29,27 +39,6 @@
 │   │   │       ├── enhanced_voice_service.py
 │   │   │       └── livekit_service.py
 │   │   └── uploads
-│   ├── web
-│   │   ├── README.md
-│   │   ├── astro.config.mjs
-│   │   ├── package.json
-│   │   ├── postcss.config.js
-│   │   ├── public
-│   │   │   └── favicon.svg
-│   │   ├── src
-│   │   │   ├── components
-│   │   │   │   ├── DocumentList.tsx
-│   │   │   │   ├── DocumentUpload.tsx
-│   │   │   │   └── VoiceInterface.tsx
-│   │   │   ├── layouts
-│   │   │   │   └── Layout.astro
-│   │   │   ├── pages
-│   │   │   │   └── index.astro
-│   │   │   └── styles
-│   │   │       └── global.css
-│   │   ├── tailwind.config.js
-│   │   ├── tailwind.config.mjs
-│   │   └── tsconfig.json
 │   └── workers
 │       ├── enhanced_voice_agent_worker.py
 │       └── voice_agent_worker.py
@@ -72,9 +61,6 @@
 │   │   └── voice_metrics_dashboard.json
 │   └── pulumi
 │       └── __main__.py
-├── package.json
-├── pnpm-lock.yaml
-├── pnpm-workspace.yaml
 ├── project-structure.txt
 ├── pyproject.toml
 ├── scripts
@@ -85,4 +71,4 @@
 │   └── test_day1_2.py
 └── uploads
 
-35 directories, 51 files
+28 directories, 44 files

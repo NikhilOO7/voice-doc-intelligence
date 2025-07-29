@@ -12,11 +12,12 @@ fastapi = "^0.111.0"
 uvicorn = {extras = ["standard"], version = "^0.30.0"}
 pydantic = "^2.8.0"
 pydantic-settings = "^2.3.0"
+av = "15.0.0"
 
 # AI/LLM Orchestration
 llama-index = "^0.10.50"
 llama-index-vector-stores-qdrant = "^0.2.8"
-crewai = "^0.150.0"
+crewai = "^0.148.0"
 onprem = "^0.16.3"
 vellum-ai = "^0.3.0"
 
@@ -71,7 +72,8 @@ prometheus-client = "^0.22.0"  # Updated to match livekit-agents requirement
 numpy = "^1.26.0"
 pandas = "^2.2.0"
 scikit-learn = "^1.5.0"
-torch = "^2.3.0"
+torch = "^2.2.2"
+onnxruntime = "1.22.0"
 
 # Development
 pytest = "^8.2.0"
