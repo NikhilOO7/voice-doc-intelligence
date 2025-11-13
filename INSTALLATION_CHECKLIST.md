@@ -77,7 +77,7 @@ docker-compose up -d
 
 ### 3. Python Backend Setup
 ```bash
-cd /Users/farheenzubair/Documents/voice-doc-intelligence
+cd /Users/nikhil007/Documents/voice-doc-intelligence
 ```
 
 - [ ] Virtual environment created

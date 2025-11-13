@@ -28,7 +28,7 @@ npm --version   # Should show 9.0.0 or higher
 
 ```bash
 # Navigate to the frontend directory
-cd /Users/farheenzubair/Documents/voice-doc-intelligence/apps/web
+cd /Users/nikhil007/Documents/voice-doc-intelligence/apps/web
 
 # Install all dependencies
 npm install
@@ -110,7 +110,7 @@ PORT=3001 npm run dev
 **Solutions:**
 1. Ensure backend is running:
    ```bash
-   cd /Users/farheenzubair/Documents/voice-doc-intelligence
+   cd /Users/nikhil007/Documents/voice-doc-intelligence
    # Start backend (see backend README)
    ```
 

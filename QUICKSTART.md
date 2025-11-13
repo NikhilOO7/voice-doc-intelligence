@@ -31,7 +31,7 @@ A production-ready voice-enabled document intelligence system with:
 ### Step 1: Clone and Navigate
 
 ```bash
-cd /Users/farheenzubair/Documents/voice-doc-intelligence
+cd /Users/nikhil007/Documents/voice-doc-intelligence
 ```
 
 ### Step 2: Install Node.js (if not installed)
@@ -128,7 +128,7 @@ Expected services:
 
 ```bash
 # Return to project root
-cd /Users/farheenzubair/Documents/voice-doc-intelligence
+cd /Users/nikhil007/Documents/voice-doc-intelligence
 
 # Create virtual environment
 python3 -m venv venv
@@ -173,7 +173,7 @@ curl http://localhost:8000/health
 In a **new terminal**:
 
 ```bash
-cd /Users/farheenzubair/Documents/voice-doc-intelligence
+cd /Users/nikhil007/Documents/voice-doc-intelligence
 source venv/bin/activate
 
 cd apps/workers
@@ -185,7 +185,7 @@ python enhanced_voice_agent_worker.py
 In a **new terminal**:
 
 ```bash
-cd /Users/farheenzubair/Documents/voice-doc-intelligence/apps/web
+cd /Users/nikhil007/Documents/voice-doc-intelligence/apps/web
 
 # Install dependencies
 npm install
