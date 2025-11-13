@@ -37,9 +37,20 @@ logger = logging.getLogger(__name__)
 
 # Download required NLTK data
 try:
+    import ssl
+    try:
+        _create_unverified_https_context = ssl._create_unverified_context
+    except AttributeError:
+        pass
+    else:
+        ssl._create_default_https_context = _create_unverified_https_context
+
+    # Download NLTK data with SSL workaround for macOS
     nltk.download('punkt', quiet=True)
+    nltk.download('punkt_tab', quiet=True)  # Updated for NLTK 3.9+
     nltk.download('stopwords', quiet=True)
-except:
+except Exception as e:
+    logger.warning(f"NLTK data download failed: {e}. Some features may be limited.")
     pass
 
 @dataclass

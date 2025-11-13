@@ -44,19 +44,72 @@ from apps.api.services.voice.enhanced_livekit_service import (
     entrypoint
 )
 
-# Agents
-from apps.api.services.agents.crew_setup import DocumentIntelligenceAgents
+# Agents - Disabled due to crewai dependency conflicts
+# from apps.api.services.agents.crew_setup import DocumentIntelligenceAgents
 
 # Models
 from apps.api.models.document import Document, DocumentChunk, DocumentCreate, DocumentResponse, DocumentStats
 from pydantic import BaseModel
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Configure logging with file handlers
+from logging.handlers import RotatingFileHandler
+import sys
+
+# Create logs directory if it doesn't exist
+logs_dir = Path("logs")
+logs_dir.mkdir(exist_ok=True)
+
+# Create formatters
+detailed_formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+simple_formatter = logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Configure root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(getattr(logging, settings.log_level))
+
+# Console handler (stdout)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(simple_formatter)
+root_logger.addHandler(console_handler)
+
+# All logs file handler (rotating)
+all_logs_handler = RotatingFileHandler(
+    logs_dir / "app.log",
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+all_logs_handler.setLevel(logging.DEBUG)
+all_logs_handler.setFormatter(detailed_formatter)
+root_logger.addHandler(all_logs_handler)
+
+# Error logs file handler (rotating) - only errors and critical
+error_logs_handler = RotatingFileHandler(
+    logs_dir / "error.log",
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+error_logs_handler.setLevel(logging.ERROR)
+error_logs_handler.setFormatter(detailed_formatter)
+root_logger.addHandler(error_logs_handler)
+
+# Access logs file handler (for API requests)
+access_logs_handler = RotatingFileHandler(
+    logs_dir / "access.log",
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+access_logs_handler.setLevel(logging.INFO)
+access_logs_handler.setFormatter(detailed_formatter)
+
 logger = logging.getLogger(__name__)
+logger.info("Logging configured - logs will be written to ./logs/ directory")
 
 # Global service instances
 doc_processor: DocumentProcessor = None
@@ -69,7 +122,7 @@ rag_service: RAGService = None
 modern_rag_service: ModernRAGService = None
 voice_service: VoiceService = None
 enhanced_voice_service: EnhancedVoiceService = None
-doc_intelligence_agents: DocumentIntelligenceAgents = None
+# doc_intelligence_agents: DocumentIntelligenceAgents = None  # Disabled - crewai conflicts
 
 # In-memory document store (replace with database in production)
 documents_store: Dict[str, Dict] = {}
@@ -96,7 +149,7 @@ async def lifespan(app: FastAPI):
         # Initialize services
         global doc_processor, modern_doc_processor, embedding_service, contextual_embedding_generator
         global vector_store, modern_vector_store, rag_service, modern_rag_service
-        global voice_service, enhanced_voice_service, doc_intelligence_agents
+        global voice_service, enhanced_voice_service  # , doc_intelligence_agents
         
         # Document processing
         doc_processor = DocumentProcessor()
@@ -123,9 +176,9 @@ async def lifespan(app: FastAPI):
         enhanced_voice_service = EnhancedVoiceService()
         logger.info("✅ Voice services initialized")
         
-        # Agents
-        doc_intelligence_agents = DocumentIntelligenceAgents()
-        logger.info("✅ Document intelligence agents initialized")
+        # Agents - Disabled due to crewai dependency conflicts
+        # doc_intelligence_agents = DocumentIntelligenceAgents()
+        # logger.info("✅ Document intelligence agents initialized")
         
         logger.info("🚀 All services initialized successfully!")
         
@@ -155,6 +208,61 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import time
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Log request
+        request_id = str(uuid.uuid4())[:8]
+        start_time = time.time()
+
+        # Get request details
+        client_host = request.client.host if request.client else "unknown"
+
+        # Log incoming request
+        access_logger = logging.getLogger("access")
+        access_logger.addHandler(access_logs_handler)
+        access_logger.info(
+            f"[{request_id}] {request.method} {request.url.path} - Client: {client_host}"
+        )
+
+        # Process request and catch any errors
+        try:
+            response = await call_next(request)
+
+            # Calculate request duration
+            duration = time.time() - start_time
+
+            # Log response
+            access_logger.info(
+                f"[{request_id}] {request.method} {request.url.path} - "
+                f"Status: {response.status_code} - Duration: {duration:.3f}s"
+            )
+
+            # Log errors for 4xx and 5xx responses
+            if response.status_code >= 400:
+                logger.warning(
+                    f"[{request_id}] Request failed - {request.method} {request.url.path} - "
+                    f"Status: {response.status_code}"
+                )
+
+            return response
+
+        except Exception as e:
+            # Log unhandled exceptions
+            duration = time.time() - start_time
+            logger.error(
+                f"[{request_id}] Unhandled exception in {request.method} {request.url.path} - "
+                f"Duration: {duration:.3f}s - Error: {str(e)}",
+                exc_info=True
+            )
+            raise
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -688,25 +796,47 @@ async def process_sample_document(background_tasks: BackgroundTasks):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     """Handle HTTP exceptions"""
+    # Log HTTP exceptions
+    logger.warning(
+        f"HTTP {exc.status_code} - {request.method} {request.url.path} - {exc.detail}"
+    )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail,
             "status_code": exc.status_code,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url.path)
         }
     )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     """Handle general exceptions"""
-    logger.error(f"Unhandled exception: {exc}")
+    # Log full exception with traceback
+    logger.error(
+        f"Unhandled exception in {request.method} {request.url.path}: {exc}",
+        exc_info=True
+    )
+
+    # Log to separate error file for critical review
+    error_logger = logging.getLogger("critical_errors")
+    error_logger.error(
+        f"CRITICAL - Unhandled exception\n"
+        f"Path: {request.method} {request.url.path}\n"
+        f"Client: {request.client.host if request.client else 'unknown'}\n"
+        f"Exception: {type(exc).__name__}: {str(exc)}",
+        exc_info=True
+    )
+
     return JSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
             "status_code": 500,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url.path)
         }
     )
 

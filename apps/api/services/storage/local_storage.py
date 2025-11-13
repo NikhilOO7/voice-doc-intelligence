@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, BinaryIO
 from datetime import datetime
 import aiofiles
-import magic
+
+# Try to import magic, but make it optional
+try:
+    import magic
+    HAS_MAGIC = True
+except (ImportError, OSError):
+    HAS_MAGIC = False
+    logging.warning("python-magic not available. File type detection will be limited.")
 
 from apps.api.core.config import settings
 
@@ -218,11 +225,21 @@ class LocalStorageService:
             }
         
         # Detect content type
-        try:
-            mime = magic.Magic(mime=True)
-            content_type = mime.from_buffer(file_content)
-        except:
-            # Fallback to extension-based detection
+        if HAS_MAGIC:
+            try:
+                mime = magic.Magic(mime=True)
+                content_type = mime.from_buffer(file_content)
+            except:
+                # Fallback to extension-based detection
+                content_type_map = {
+                    ".pdf": "application/pdf",
+                    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".doc": "application/msword",
+                    ".txt": "text/plain"
+                }
+                content_type = content_type_map.get(file_ext, "application/octet-stream")
+        else:
+            # Fallback to extension-based detection when magic is not available
             content_type_map = {
                 ".pdf": "application/pdf",
                 ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

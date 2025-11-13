@@ -10,7 +10,6 @@ import uuid
 from datetime import datetime, timedelta
 
 from ...core.config import settings
-from ...core.connections import connections
 
 logger = logging.getLogger(__name__)
 

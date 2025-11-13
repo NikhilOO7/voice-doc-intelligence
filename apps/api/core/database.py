@@ -2,6 +2,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
+from sqlalchemy import text
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -56,3 +57,17 @@ async def get_db_context():
             raise
         finally:
             await session.close()
+
+# Initialize database
+async def init_db():
+    """Initialize database tables"""
+    try:
+        async with engine.begin() as conn:
+            # Create schema if it doesn't exist
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS doc_intel"))
+            # Create all tables
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise

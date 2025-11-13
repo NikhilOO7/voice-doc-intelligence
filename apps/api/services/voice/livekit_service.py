@@ -9,16 +9,15 @@ import base64
 from typing import Dict, Any, Optional
 
 # Original imports preserved
-from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, llm
-from livekit.agents.voice_assistant import VoiceAssistant
-from livekit.plugins import openai, silero, deepgram
-from livekit import api, rtc
-
-# Enhanced imports
-from livekit.agents import Agent, AgentSession, function_tool
+from livekit import api
+import openai  # OpenAI Python SDK for Whisper and TTS
 
 from apps.api.core.config import settings
 from apps.api.services.rag.llamaindex_service import RAGService, ModernRAGService
+
+# Note: function_tool and other livekit.agents imports are commented out
+# as they're only needed for the deprecated entrypoint function
+# from livekit.agents import function_tool
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +132,9 @@ class DocumentIntelligenceVoiceAgent:
         self.rag_service = RAGService()
         self.modern_rag_service = ModernRAGService()
         
-    @function_tool
+    # @function_tool  # Commented out - requires livekit.agents
     async def search_documents(
-        self, 
+        self,
         query: str,
         document_type: Optional[str] = None,
         max_results: int = 5,
@@ -173,7 +172,7 @@ class DocumentIntelligenceVoiceAgent:
             logger.error(f"Document search failed: {e}")
             return f"I'm sorry, I encountered an error while searching for '{query}'. Please try again."
     
-    @function_tool
+    # @function_tool  # Commented out - requires livekit.agents
     async def get_document_summary(self, document_id: str) -> str:
         """Get document summary - enhanced functionality"""
         try:
@@ -183,7 +182,7 @@ class DocumentIntelligenceVoiceAgent:
             logger.error(f"Document summary failed: {e}")
             return "I'm sorry, I couldn't retrieve the document summary."
     
-    @function_tool
+    # @function_tool  # Commented out - requires livekit.agents
     async def list_recent_documents(self, limit: int = 5) -> str:
         """List recent documents - enhanced functionality"""
         try:
@@ -194,67 +193,10 @@ class DocumentIntelligenceVoiceAgent:
             return "I'm sorry, I couldn't retrieve the document list."
 
 
-# LiveKit Agent Entry Point - Enhanced while preserving original functionality
-async def entrypoint(ctx: JobContext):
-    """Enhanced LiveKit agent entry point preserving original functionality"""
-    
-    initial_ctx = llm.ChatContext().append(
-        role="system",
-        text=(
-            "You are an enhanced document intelligence assistant with voice capabilities. "
-            "You can answer questions about uploaded documents, provide summaries, and help users find specific information. "
-            "You have access to both basic and enhanced processing capabilities. "
-            "Keep your responses conversational and helpful. "
-            "If you don't know something, say so clearly and suggest alternatives."
-        ),
-    )
-
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-
-    # Initialize enhanced document intelligence agent
-    doc_agent = DocumentIntelligenceVoiceAgent()
-    
-    # Create custom LLM that uses our RAG services
-    class EnhancedDocumentLLM(llm.LLM):
-        def __init__(self):
-            super().__init__()
-        
-        async def agenerate(self, prompt: str, **kwargs) -> llm.LLMResponse:
-            try:
-                # Use enhanced RAG service by default, fallback to original
-                try:
-                    result = await doc_agent.modern_rag_service.process_query(
-                        query=prompt,
-                        conversation_id=ctx.room.name
-                    )
-                except:
-                    result = await doc_agent.rag_service.process_query(
-                        query=prompt,
-                        conversation_id=ctx.room.name
-                    )
-                
-                return llm.LLMResponse(text=result["answer"])
-                
-            except Exception as e:
-                logger.error(f"Enhanced LLM generation failed: {e}")
-                return llm.LLMResponse(text="I apologize, but I encountered an error processing your request.")
-    
-    # Create enhanced voice assistant with original structure preserved
-    assistant = VoiceAssistant(
-        vad=silero.VAD.load(),
-        stt=deepgram.STT(),
-        llm=EnhancedDocumentLLM(),
-        tts=openai.TTS(),
-        chat_ctx=initial_ctx,
-    )
-
-    # Start the assistant
-    assistant.start(ctx.room)
-
-    await asyncio.sleep(1)
-    await assistant.say(
-        "Hello! I'm your enhanced document intelligence assistant. "
-        "I can help you search through your documents, get summaries, and answer questions. "
-        "What would you like to know?", 
-        allow_interruptions=True
-    )
+# LiveKit Agent Entry Point - DEPRECATED
+# Note: This entrypoint function uses the old VoiceAssistant API which is no longer available
+# in livekit-agents 1.1.7+. Use enhanced_livekit_service.py instead for the updated implementation.
+#
+# async def entrypoint(ctx: JobContext):
+#     """Enhanced LiveKit agent entry point preserving original functionality"""
+#     ... (commented out due to API changes)

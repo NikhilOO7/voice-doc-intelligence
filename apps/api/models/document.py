@@ -4,6 +4,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
 
 from ..core.database import Base
 
@@ -23,9 +25,9 @@ class Document(Base):
     processing_started_at = Column(DateTime)
     processing_completed_at = Column(DateTime)
     processing_error = Column(JSON)
-    
-    # Metadata
-    metadata = Column(JSON, default=dict)
+
+    # Metadata (renamed to avoid SQLAlchemy reserved name)
+    doc_metadata = Column(JSON, default=dict)
     extracted_metadata = Column(JSON, default=dict)
     user_metadata = Column(JSON, default=dict)
     
@@ -67,8 +69,8 @@ class DocumentChunk(Base):
     is_table = Column(Boolean, default=False)
     is_list = Column(Boolean, default=False)
     
-    # Metadata
-    metadata = Column(JSON, default=dict)
+    # Metadata (renamed to avoid SQLAlchemy reserved name)
+    chunk_metadata = Column(JSON, default=dict)
     embeddings = Column(JSON, default=dict)
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -118,10 +120,37 @@ class Entity(Base):
     
     start_offset = Column(Integer)
     end_offset = Column(Integer)
-    
-    metadata = Column(JSON, default=dict)
+
+    entity_metadata = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     
     # Relationships
     document = relationship("Document", back_populates="entities")
     chunk = relationship("DocumentChunk", back_populates="entities")
+
+# Pydantic models for API
+class DocumentCreate(BaseModel):
+    """Request model for creating a document"""
+    filename: str
+    content_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class DocumentResponse(BaseModel):
+    """Response model for document"""
+    id: str
+    filename: str
+    file_type: Optional[str] = None
+    file_size: Optional[int] = None
+    processing_status: str
+    created_at: str
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+class DocumentStats(BaseModel):
+    """Document statistics"""
+    total_documents: int
+    total_chunks: int
+    total_entities: int
+    processing_status_counts: Dict[str, int]

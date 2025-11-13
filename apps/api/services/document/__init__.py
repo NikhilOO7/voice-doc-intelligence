@@ -9,7 +9,7 @@ from datetime import datetime
 
 from ...core.database import get_db
 from ...core.config import settings
-from ...core.connections import connections
+from ...core.connections import get_storage_service
 from ...models.document import Document, DocumentChunk
 from .processor import ModernDocumentProcessor
 from .embeddings import ContextualEmbeddingGenerator
@@ -50,48 +50,42 @@ async def upload_document(
         except:
             pass
     
-    # Save file to MinIO
-    minio_client = connections.get_minio()
+    # Save file to storage
+    storage_service = get_storage_service()
     file_id = str(uuid.uuid4())
-    object_name = f"documents/{file_id}/{file.filename}"
-    
+
     try:
-        # Upload to MinIO
+        # Upload to storage (local or MinIO)
         file_data = await file.read()
-        import io
-        minio_client.put_object(
-            settings.minio_bucket,
-            object_name,
-            io.BytesIO(file_data),
-            len(file_data),
-            content_type=file.content_type
+
+        storage_result = await storage_service.upload_file(
+            file_content=file_data,
+            filename=file.filename,
+            document_id=file_id,
+            metadata=user_metadata
         )
         
         # Create document record
         document = Document(
             filename=file.filename,
-            file_type=file.content_type,
-            file_size=len(file_data),
+            file_type=storage_result["content_type"],
+            file_size=storage_result["file_size"],
             user_metadata=user_metadata,
-            processing_status="queued"
+            processing_status="queued",
+            file_hash=storage_result["file_hash"]
         )
-        
+
         db.add(document)
         await db.commit()
         await db.refresh(document)
-        
-        # Save temporary file for processing
-        temp_path = f"/tmp/{file_id}_{file.filename}"
-        with open(temp_path, "wb") as f:
-            f.write(file_data)
-        
+
         # Queue processing task
         background_tasks.add_task(
             process_document_task,
             str(document.id),
-            temp_path,
-            object_name,
-            file.content_type
+            storage_result["file_path"],
+            storage_result["file_path"],
+            storage_result["content_type"]
         )
         
         return {
@@ -105,7 +99,7 @@ async def upload_document(
     except Exception as e:
         # Clean up on error
         try:
-            minio_client.remove_object(settings.minio_bucket, object_name)
+            await storage_service.delete_file(file_id, file.filename)
         except:
             pass
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -189,7 +183,7 @@ async def process_document_task(
             # Update document status
             document.processing_status = "completed"
             document.processing_completed_at = datetime.utcnow()
-            document.metadata = {
+            document.doc_metadata = {
                 "chunks_count": len(result["chunks"]),
                 "embeddings_stored": stored_counts,
                 "object_name": object_name
@@ -245,7 +239,7 @@ async def get_document(
         "file_type": document.file_type,
         "file_size": document.file_size,
         "processing_status": document.processing_status,
-        "metadata": document.metadata,
+        "metadata": document.doc_metadata,
         "extracted_metadata": document.extracted_metadata,
         "user_metadata": document.user_metadata,
         "created_at": document.created_at,
@@ -266,7 +260,7 @@ async def get_document(
                 "chunk_index": chunk.chunk_index,
                 "content": chunk.content[:200] + "..." if len(chunk.content) > 200 else chunk.content,
                 "token_count": chunk.token_count,
-                "metadata": chunk.metadata
+                "metadata": chunk.chunk_metadata
             }
             for chunk in chunks.scalars()
         ]
@@ -341,16 +335,14 @@ async def delete_document(
     # Delete from vector store
     deleted_counts = await vector_store.delete_document(str(document.id))
     
-    # Delete from MinIO
-    if document.metadata and "object_name" in document.metadata:
-        try:
-            minio_client = connections.get_minio()
-            minio_client.remove_object(
-                settings.minio_bucket,
-                document.metadata["object_name"]
-            )
-        except Exception as e:
-            logger.warning(f"Failed to delete from MinIO: {e}")
+    # Delete from storage
+    try:
+        storage_service = get_storage_service()
+        await storage_service.delete_file(str(document.id), document.filename)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to delete from storage: {e}")
     
     # Soft delete from database
     document.deleted_at = datetime.utcnow()
@@ -386,24 +378,10 @@ async def reprocess_document(
     if document.deleted_at:
         raise HTTPException(status_code=400, detail="Cannot reprocess deleted document")
     
-    # Get object from MinIO
-    if not document.metadata or "object_name" not in document.metadata:
-        raise HTTPException(status_code=400, detail="Document file not found")
-    
+    # Get file from storage
     try:
-        minio_client = connections.get_minio()
-        response = minio_client.get_object(
-            settings.minio_bucket,
-            document.metadata["object_name"]
-        )
-        file_data = response.read()
-        response.close()
-        response.release_conn()
-        
-        # Save temporary file
-        temp_path = f"/tmp/reprocess_{document.id}_{document.filename}"
-        with open(temp_path, "wb") as f:
-            f.write(file_data)
+        storage_service = get_storage_service()
+        file_path = await storage_service.get_file_path(str(document.id), document.filename)
         
         # Reset status
         document.processing_status = "queued"
@@ -414,8 +392,8 @@ async def reprocess_document(
         background_tasks.add_task(
             process_document_task,
             str(document.id),
-            temp_path,
-            document.metadata["object_name"],
+            file_path,
+            file_path,
             document.file_type
         )
         

@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Changed to 5433 to avoid conflict
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U voicedoc"]
       interval: 10s
@@ -47,24 +47,24 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
       - QDRANT__LOG_LEVEL=INFO
 
-  # MinIO for object storage
-  minio:
-    image: minio/minio:latest
-    container_name: voice-doc-minio
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    environment:
-      MINIO_ROOT_USER: voicedoc
-      MINIO_ROOT_PASSWORD: voicedoc123
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # MinIO for object storage (DISABLED - using local filesystem storage)
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: voice-doc-minio
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   environment:
+  #     MINIO_ROOT_USER: voicedoc
+  #     MINIO_ROOT_PASSWORD: voicedoc123
+  #   volumes:
+  #     - minio_data:/data
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
 
   # LiveKit server for voice
   livekit:
@@ -87,4 +87,4 @@ volumes:
   postgres_data:
   redis_data:
   qdrant_data:
-  minio_data:
+  # minio_data:  # Disabled - using local storage

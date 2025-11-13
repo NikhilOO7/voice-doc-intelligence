@@ -17,11 +17,14 @@ import numpy as np
 from livekit import api, rtc
 from livekit.agents import (
     AutoSubscribe, JobContext, WorkerOptions,
-    VoiceAssistant, llm, stt, tts,
-    Agent, AgentCallContext, MultimodalAgent
+    llm, stt, tts, Agent
 )
-from livekit.agents.pipeline import VoicePipelineAgent
-from livekit.plugins import deepgram, cartesia, openai, silero
+# Note: The following imports are not available in livekit-agents 1.1.7+:
+# VoiceAssistant, AgentCallContext, MultimodalAgent, VoicePipelineAgent
+# from livekit.plugins import deepgram, cartesia, openai, silero  # Requires separate plugin packages
+
+# OpenAI SDK
+import openai
 
 # Your app imports
 from apps.api.core.config import settings
@@ -307,68 +310,22 @@ class EnhancedVoiceService:
         self.doc_agent = DocumentIntelligenceVoiceAgent()
         self.sessions: Dict[str, Any] = {}
         
-    async def create_voice_pipeline(self, room: rtc.Room) -> VoicePipelineAgent:
-        """Create optimized voice pipeline with Deepgram + Cartesia"""
-        
-        # Initialize Deepgram STT with Nova-3
-        stt_plugin = deepgram.STT(
-            api_key=settings.deepgram_api_key,
-            model="nova-2-meeting",
-            language="en-US",
-            punctuate=True,
-            profanity_filter=False,
-            diarize=True,
-            smart_format=True,
-            filler_words=False,
-            utterance_end_ms=1000,
-            interim_results=True,
-            end_pointing=True
+    async def create_voice_pipeline(self, room: rtc.Room):
+        """Create optimized voice pipeline with Deepgram + Cartesia
+
+        NOTE: This method is currently disabled due to missing livekit plugin dependencies.
+        To enable, install: livekit-plugins-deepgram, livekit-plugins-cartesia, livekit-plugins-silero
+        """
+        raise NotImplementedError(
+            "Voice pipeline creation requires livekit plugin packages. "
+            "Please install: livekit-plugins-deepgram, livekit-plugins-cartesia, livekit-plugins-silero"
         )
-        
-        # Initialize Cartesia TTS with Sonic
-        tts_plugin = cartesia.TTS(
-            api_key=settings.cartesia_api_key,
-            voice=settings.cartesia_voice_id or "sonic-english",
-            model="sonic-turbo",
-            language="en",
-            speed=1.0,
-            emotion=["neutral"],
-            encoding="pcm_s16le",
-            sample_rate=16000
-        )
-        
-        # Create document-aware LLM
-        llm_plugin = DocumentAwareLLM(self.doc_agent)
-        
-        # Initialize VAD
-        vad_plugin = silero.VAD.load(
-            min_speech_duration=0.1,
-            min_silence_duration=0.3,
-            pre_speech_pad_ms=100,
-            post_speech_pad_ms=100
-        )
-        
-        # Create voice pipeline
-        agent = VoicePipelineAgent(
-            vad=vad_plugin,
-            stt=stt_plugin,
-            llm=llm_plugin,
-            tts=tts_plugin,
-            interrupt_min_words=2,
-            min_endpointing_delay=0.5,
-            turn_detection="vad_only",
-            transcription=VoicePipelineAgent.TranscriptionOptions(
-                user_transcription_options=VoicePipelineAgent.UserTranscriptionOptions(
-                    interim_results=True
-                ),
-                agent_transcription_options=VoicePipelineAgent.AgentTranscriptionOptions(
-                    interim_results=False,
-                    ignore_empty_utterances=True
-                )
-            )
-        )
-        
-        return agent
+
+        # The following code requires livekit.plugins which are not currently installed:
+        # stt_plugin = deepgram.STT(...)
+        # tts_plugin = cartesia.TTS(...)
+        # vad_plugin = silero.VAD.load(...)
+        # agent = VoicePipelineAgent(...)
 
 class DocumentAwareLLM(llm.LLM):
     """Custom LLM that integrates with document search"""
@@ -381,7 +338,7 @@ class DocumentAwareLLM(llm.LLM):
     async def chat(
         self,
         chat_ctx: llm.ChatContext,
-        fnc_ctx: Optional[llm.FunctionContext] = None,
+        fnc_ctx: Optional[llm.ToolContext] = None,
         temperature: float = 0.7,
         n: int = 1,
         parallel_tool_calls: bool = True
