@@ -311,5 +311,54 @@ class ContextualEmbeddingGenerator:
         
         # Cache result
         self._embedding_cache[cache_key] = embeddings
-        
+
         return embeddings
+
+    async def generate_contextual_embedding(
+        self,
+        text: str,
+        context_level: str = "local",
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        document_context: Optional[List[str]] = None
+    ) -> List[float]:
+        """Generate a single contextual embedding for query/search purposes
+
+        Args:
+            text: The text to embed
+            context_level: Context level ("local", "document", or "global")
+            conversation_history: Recent conversation messages
+            document_context: List of relevant document names
+
+        Returns:
+            Embedding vector as list of floats
+        """
+        # Build contextual text
+        context_parts = []
+
+        # Add conversation context
+        if conversation_history:
+            recent_messages = conversation_history[-3:]  # Last 3 messages
+            context_parts.append(" ".join([msg.get("content", "") for msg in recent_messages]))
+
+        # Add document context
+        if document_context:
+            context_parts.append(f"Documents: {', '.join(document_context)}")
+
+        # Add context level marker
+        context_parts.append(f"Context: {context_level}")
+
+        # Combine context with query text
+        contextual_text = " ".join(context_parts) + " " + text if context_parts else text
+
+        # Generate embedding
+        embeddings_dict = await self._generate_embedding(contextual_text, use_voyage=True)
+
+        # Return the best available embedding
+        if embeddings_dict.get("openai"):
+            return embeddings_dict["openai"]
+        elif embeddings_dict.get("voyage"):
+            return embeddings_dict["voyage"]
+        elif embeddings_dict.get("local"):
+            return embeddings_dict["local"]
+        else:
+            raise ValueError("No embeddings generated")

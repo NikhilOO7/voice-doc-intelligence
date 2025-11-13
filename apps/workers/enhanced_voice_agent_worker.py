@@ -15,6 +15,15 @@ import signal
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = project_root / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+    print(f"✅ Loaded environment from {env_path}")
+else:
+    print(f"⚠️  No .env file found at {env_path}")
+
 from livekit.agents import WorkerOptions, cli
 from prometheus_client import Counter, Histogram, Gauge, start_http_server
 from apps.api.services.voice.enhanced_livekit_service import (
@@ -42,9 +51,10 @@ concurrent_sessions = Gauge('voice_concurrent_sessions', 'Number of concurrent s
 
 class MetricsCollector:
     """Collect and expose metrics for monitoring"""
-    
+
     def __init__(self):
-        self.start_time = asyncio.get_event_loop().time()
+        import time
+        self.start_time = time.time()
         
     def record_session_start(self):
         session_counter.inc()
@@ -166,4 +176,33 @@ async def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Note: cli.run_app() manages its own event loop, don't use asyncio.run()
+
+    logger.info("=" * 50)
+    logger.info("Enhanced Voice Agent Worker Starting")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Voice Stack: Deepgram + Cartesia + LiveKit")
+    logger.info(f"Target Latency: {settings.target_total_latency_ms}ms")
+    logger.info("=" * 50)
+
+    # Validate configuration
+    if not validate_configuration():
+        logger.error("Configuration validation failed. Exiting.")
+        sys.exit(1)
+
+    # Start Prometheus metrics server
+    if settings.enable_metrics:
+        start_http_server(9091)
+        logger.info("Prometheus metrics available at http://localhost:9091/metrics")
+
+    # Log voice pipeline configuration
+    logger.info("Voice Pipeline Configuration:")
+    for key, value in settings.voice_pipeline_config.items():
+        logger.info(f"  {key}: {value}")
+
+    # Create worker options
+    worker_options = create_worker_options()
+
+    # Run the worker (cli.run_app manages its own event loop)
+    logger.info("Starting LiveKit agent worker...")
+    cli.run_app(worker_options)

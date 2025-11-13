@@ -36,22 +36,92 @@ from apps.api.models.document import Document, DocumentChunk, ContextualEmbeddin
 logger = logging.getLogger(__name__)
 
 # Download required NLTK data
-try:
+def download_nltk_data():
+    """Download NLTK data with SSL workaround"""
     import ssl
+    import os
+
+    # Create unverified SSL context for NLTK downloads (macOS workaround)
     try:
         _create_unverified_https_context = ssl._create_unverified_context
     except AttributeError:
+        # Legacy Python that doesn't verify HTTPS certificates by default
         pass
     else:
+        # Handle target environment that doesn't support HTTPS verification
         ssl._create_default_https_context = _create_unverified_https_context
 
-    # Download NLTK data with SSL workaround for macOS
-    nltk.download('punkt', quiet=True)
-    nltk.download('punkt_tab', quiet=True)  # Updated for NLTK 3.9+
-    nltk.download('stopwords', quiet=True)
+    # Ensure NLTK data directory exists
+    nltk_data_dir = os.path.expanduser('~/nltk_data')
+    os.makedirs(nltk_data_dir, exist_ok=True)
+
+    # Try to download required packages
+    packages = ['punkt', 'punkt_tab', 'stopwords']
+    for package in packages:
+        try:
+            nltk.download(package, quiet=True, raise_on_error=True)
+            logger.info(f"Successfully downloaded NLTK package: {package}")
+        except Exception as e:
+            logger.warning(f"Failed to download NLTK package '{package}': {e}")
+            # Check if package already exists locally
+            try:
+                if package == 'punkt':
+                    nltk.data.find('tokenizers/punkt')
+                    logger.info(f"NLTK package '{package}' already available locally")
+                elif package == 'punkt_tab':
+                    nltk.data.find('tokenizers/punkt_tab')
+                    logger.info(f"NLTK package '{package}' already available locally")
+                elif package == 'stopwords':
+                    nltk.data.find('corpora/stopwords')
+                    logger.info(f"NLTK package '{package}' already available locally")
+            except LookupError:
+                logger.warning(f"NLTK package '{package}' not available locally or via download")
+
+# Initialize NLTK data
+try:
+    download_nltk_data()
 except Exception as e:
-    logger.warning(f"NLTK data download failed: {e}. Some features may be limited.")
+    logger.warning(f"NLTK initialization failed: {e}. Text processing features may be limited.")
     pass
+
+# Safe NLTK wrappers that fallback when data is unavailable
+def safe_sent_tokenize(text: str) -> List[str]:
+    """Tokenize text into sentences with fallback"""
+    try:
+        return sent_tokenize(text)
+    except LookupError:
+        # Fallback to simple sentence splitting
+        logger.debug("NLTK punkt not available, using simple sentence splitting")
+        import re
+        # Simple sentence splitter based on punctuation
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        return [s.strip() for s in sentences if s.strip()]
+
+def safe_word_tokenize(text: str) -> List[str]:
+    """Tokenize text into words with fallback"""
+    try:
+        return word_tokenize(text)
+    except LookupError:
+        # Fallback to simple word splitting
+        logger.debug("NLTK punkt not available, using simple word splitting")
+        import re
+        words = re.findall(r'\b\w+\b', text.lower())
+        return words
+
+def safe_get_stopwords() -> set:
+    """Get stopwords with fallback"""
+    try:
+        return set(stopwords.words('english'))
+    except LookupError:
+        # Fallback to basic stopwords list
+        logger.debug("NLTK stopwords not available, using basic stopword list")
+        return {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be',
+            'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+            'would', 'should', 'could', 'may', 'might', 'must', 'can', 'this',
+            'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they'
+        }
 
 @dataclass
 class ChunkMetadata:
@@ -191,35 +261,36 @@ class ModernDocumentProcessor:
             "tables": [],
             "images": []
         }
-        
-        with PDF(file_path) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                # Extract text
-                text = page.extract_text() or ""
-                content_parts.append(text)
-                
-                # Extract structure
-                structure_info["pages"].append({
-                    "page_num": page_num + 1,
-                    "text": text,
-                    "tables": len(page.extract_tables()),
-                    "bbox": page.bbox
-                })
-                
-                # Extract tables
-                tables = page.extract_tables()
-                for table_idx, table in enumerate(tables):
-                    structure_info["tables"].append({
-                        "page": page_num + 1,
-                        "index": table_idx,
-                        "data": table
+
+        with open(file_path, 'rb') as f:
+            with PDF(f) as pdf:
+                for page_num, page in enumerate(pdf.pages):
+                    # Extract text
+                    text = page.extract_text() or ""
+                    content_parts.append(text)
+
+                    # Extract structure
+                    structure_info["pages"].append({
+                        "page_num": page_num + 1,
+                        "text": text,
+                        "tables": len(page.extract_tables()),
+                        "bbox": page.bbox
                     })
-        
+
+                    # Extract tables
+                    tables = page.extract_tables()
+                    for table_idx, table in enumerate(tables):
+                        structure_info["tables"].append({
+                            "page": page_num + 1,
+                            "index": table_idx,
+                            "data": table
+                        })
+
         # Detect sections based on formatting
         full_content = "\n\n".join(content_parts)
         sections = self._detect_sections(full_content)
         structure_info["sections"] = sections
-        
+
         return full_content, structure_info
     
     async def _extract_docx_content(self, file_path: str) -> Tuple[str, Dict[str, Any]]:
@@ -284,15 +355,40 @@ class ModernDocumentProcessor:
         return "\n\n".join(content_parts), structure_info
     
     async def _extract_text_content(self, file_path: str) -> Tuple[str, Dict[str, Any]]:
-        """Extract content from plain text file"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
+        """Extract content from plain text file with encoding detection"""
+        import chardet
+
+        # Read file in binary mode to detect encoding
+        with open(file_path, 'rb') as f:
+            raw_data = f.read()
+
+        # Detect encoding
+        detected = chardet.detect(raw_data)
+        encoding = detected.get('encoding', 'utf-8')
+        confidence = detected.get('confidence', 0)
+
+        logger.info(f"Detected encoding: {encoding} (confidence: {confidence:.2f})")
+
+        # Try detected encoding first, fall back to utf-8, then latin-1
+        for enc in [encoding, 'utf-8', 'latin-1', 'cp1252']:
+            try:
+                content = raw_data.decode(enc)
+                logger.info(f"Successfully decoded with {enc}")
+                break
+            except (UnicodeDecodeError, AttributeError, LookupError):
+                continue
+        else:
+            # Last resort: decode with errors='ignore'
+            content = raw_data.decode('utf-8', errors='ignore')
+            logger.warning(f"Used UTF-8 with errors='ignore' for {file_path}")
+
         structure_info = {
             "sections": self._detect_sections(content),
-            "paragraphs": content.split('\n\n')
+            "paragraphs": content.split('\n\n'),
+            "detected_encoding": encoding,
+            "encoding_confidence": confidence
         }
-        
+
         return content, structure_info
     
     def _detect_sections(self, text: str) -> List[Dict[str, Any]]:
@@ -402,9 +498,9 @@ class ModernDocumentProcessor:
     ) -> List[ProcessedChunk]:
         """Chunk a section intelligently"""
         chunks = []
-        
-        # Split into sentences
-        sentences = sent_tokenize(content)
+
+        # Split into sentences using safe wrapper
+        sentences = safe_sent_tokenize(content)
         
         current_chunk = []
         current_tokens = 0
@@ -519,9 +615,9 @@ class ModernDocumentProcessor:
     def _extract_keywords(self, text: str, max_keywords: int = 5) -> List[str]:
         """Extract keywords using TF-IDF"""
         try:
-            # Tokenize and remove stopwords
-            stop_words = set(stopwords.words('english'))
-            words = word_tokenize(text.lower())
+            # Tokenize and remove stopwords using safe wrappers
+            stop_words = safe_get_stopwords()
+            words = safe_word_tokenize(text.lower())
             words = [w for w in words if w.isalnum() and w not in stop_words and len(w) > 2]
             
             if not words:
@@ -582,9 +678,9 @@ class ModernDocumentProcessor:
         
         # Combine content
         combined_text = " ".join([chunk.content for chunk in sample_chunks])
-        
+
         # Simple extractive summary (can be replaced with abstractive)
-        sentences = sent_tokenize(combined_text)
+        sentences = safe_sent_tokenize(combined_text)
         if len(sentences) > 5:
             # Use first 2 and last sentence
             summary = " ".join(sentences[:2] + [sentences[-1]])

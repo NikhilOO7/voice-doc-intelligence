@@ -130,6 +130,8 @@ documents_store: Dict[str, Dict] = {}
 # WebSocket connections for real-time updates
 active_connections: List[WebSocket] = []
 
+# Voice worker runs as separate process - see START_VOICE.md
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
@@ -164,6 +166,7 @@ async def lifespan(app: FastAPI):
         # Vector stores
         vector_store = VectorStoreService()
         modern_vector_store = ModernVectorStore()
+        await modern_vector_store.initialize()  # Initialize collections
         logger.info("✅ Vector stores initialized")
         
         # RAG services
@@ -175,22 +178,23 @@ async def lifespan(app: FastAPI):
         voice_service = VoiceService()
         enhanced_voice_service = EnhancedVoiceService()
         logger.info("✅ Voice services initialized")
-        
+
         # Agents - Disabled due to crewai dependency conflicts
         # doc_intelligence_agents = DocumentIntelligenceAgents()
         # logger.info("✅ Document intelligence agents initialized")
-        
+
         logger.info("🚀 All services initialized successfully!")
-        
+        logger.info("🎙️  Voice worker must be started separately - see START_VOICE.md")
+
     except Exception as e:
         logger.error(f"❌ Initialization failed: {e}")
         raise
-    
+
     yield
-    
+
     # Cleanup
     logger.info("Shutting down services...")
-    # Add cleanup code here
+    logger.info("✅ Shutdown complete")
 
 # Create FastAPI app
 app = FastAPI(
@@ -286,16 +290,23 @@ class QueryResponse(BaseModel):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Voice worker runs as separate process
+    # To check if it's running, the frontend can check LiveKit connectivity
+    voice_worker_status = "separate_process"
+
     services_status = {
         "database": "healthy",
         "redis": "healthy" if await get_redis_client() else "unhealthy",
         "qdrant": "healthy" if await get_qdrant_client() else "unhealthy",
         "embeddings": "healthy" if embedding_service else "unhealthy",
         "voice": "healthy" if voice_service else "unhealthy",
+        "voice_worker": voice_worker_status,
     }
-    
-    overall_health = "healthy" if all(status == "healthy" for status in services_status.values()) else "degraded"
-    
+
+    overall_health = "healthy" if all(
+        status in ["healthy", "running", "disabled"] for status in services_status.values()
+    ) else "degraded"
+
     return {
         "status": overall_health,
         "services": services_status,
@@ -603,19 +614,20 @@ async def get_voice_token(
 ):
     """Get LiveKit token for voice connection"""
     try:
-        token = await enhanced_voice_service.doc_agent.generate_token(
+        # Use the VoiceService which has generate_token method
+        token = await voice_service.generate_token(
             room_name=room_name,
             participant_name=participant_name
         )
-        
+
         return {
             "token": token,
             "url": settings.livekit_url,
             "room_name": room_name
         }
-        
+
     except Exception as e:
-        logger.error(f"Token generation failed: {e}")
+        logger.error(f"Token generation failed: {e}", exc_info=True)
         raise HTTPException(500, "Failed to generate voice token")
 
 # WebSocket endpoint for real-time updates

@@ -149,6 +149,10 @@ class ApiClient {
 
     ws.onmessage = (event) => {
       try {
+        // Ignore pong responses from keepalive ping
+        if (event.data === 'pong') {
+          return;
+        }
         const message = JSON.parse(event.data);
         onMessage(message);
       } catch (error) {

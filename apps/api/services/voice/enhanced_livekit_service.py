@@ -17,12 +17,8 @@ import numpy as np
 from livekit import api, rtc
 from livekit.agents import (
     AutoSubscribe, JobContext, WorkerOptions,
-    llm, stt, tts, Agent
+    llm, stt, tts, voice
 )
-# Note: The following imports are not available in livekit-agents 1.1.7+:
-# VoiceAssistant, AgentCallContext, MultimodalAgent, VoicePipelineAgent
-# from livekit.plugins import deepgram, cartesia, openai, silero  # Requires separate plugin packages
-
 # OpenAI SDK
 import openai
 
@@ -33,6 +29,14 @@ from apps.api.services.document.vector_store import ModernVectorStore
 from apps.api.services.document.embeddings import ContextualEmbeddingGenerator
 
 logger = logging.getLogger(__name__)
+
+# LiveKit plugin imports (after logger initialization)
+try:
+    from livekit.plugins import deepgram, cartesia, openai as lk_openai, silero
+    PLUGINS_AVAILABLE = True
+except ImportError:
+    PLUGINS_AVAILABLE = False
+    logger.warning("LiveKit plugins not available. Voice pipeline will be disabled.")
 
 @dataclass
 class ConversationContext:
@@ -311,21 +315,69 @@ class EnhancedVoiceService:
         self.sessions: Dict[str, Any] = {}
         
     async def create_voice_pipeline(self, room: rtc.Room):
-        """Create optimized voice pipeline with Deepgram + Cartesia
+        """Create optimized voice pipeline with Deepgram + Cartesia"""
 
-        NOTE: This method is currently disabled due to missing livekit plugin dependencies.
-        To enable, install: livekit-plugins-deepgram, livekit-plugins-cartesia, livekit-plugins-silero
-        """
-        raise NotImplementedError(
-            "Voice pipeline creation requires livekit plugin packages. "
-            "Please install: livekit-plugins-deepgram, livekit-plugins-cartesia, livekit-plugins-silero"
+        if not PLUGINS_AVAILABLE:
+            raise RuntimeError(
+                "Voice pipeline creation requires livekit plugin packages. "
+                "Please install: livekit-plugins-deepgram, livekit-plugins-cartesia, livekit-plugins-silero"
+            )
+
+        logger.info("Creating voice pipeline with Deepgram STT + Cartesia TTS + Silero VAD")
+
+        # Create Deepgram STT with Nova-3 (ultra-low latency)
+        stt_plugin = deepgram.STT(
+            model="nova-2-general",
+            language="en-US",
+            interim_results=True,
+            punctuate=True,
+            smart_format=True,
         )
 
-        # The following code requires livekit.plugins which are not currently installed:
-        # stt_plugin = deepgram.STT(...)
-        # tts_plugin = cartesia.TTS(...)
-        # vad_plugin = silero.VAD.load(...)
-        # agent = VoicePipelineAgent(...)
+        # Create Cartesia TTS with Sonic (ultra-low latency)
+        tts_plugin = cartesia.TTS(
+            model="sonic-english",
+            voice="79a125e8-cd45-4c13-8a67-188112f4dd22",  # British Lady
+            speed=1.0,
+            emotion=["positivity:high", "curiosity:high"]
+        )
+
+        # Load Silero VAD for voice activity detection
+        vad_plugin = silero.VAD.load()
+
+        # Create custom LLM that integrates with document search
+        custom_llm = DocumentAwareLLM(doc_agent=self.doc_agent)
+
+        # Create initial chat context with system message
+        initial_ctx = llm.ChatContext()
+        initial_ctx.add_message(
+            role="system",
+            content="""You are an intelligent document assistant with voice capabilities.
+
+You have access to a comprehensive document knowledge base with contextual embeddings.
+Provide concise, helpful responses based on the documents available.
+When answering, be conversational and natural."""
+        )
+
+        # Create voice agent with instructions
+        agent = voice.Agent(
+            instructions="""You are an intelligent document assistant with voice capabilities.
+
+You have access to a comprehensive document knowledge base with contextual embeddings.
+Provide concise, helpful responses based on the documents available.
+When answering, be conversational and natural.""",
+            vad=vad_plugin,
+            stt=stt_plugin,
+            llm=custom_llm,
+            tts=tts_plugin,
+            chat_ctx=initial_ctx,
+        )
+
+        # Start the agent
+        agent.start(room)
+
+        logger.info("Voice pipeline created and started successfully")
+        return agent
 
 class DocumentAwareLLM(llm.LLM):
     """Custom LLM that integrates with document search"""
@@ -457,43 +509,18 @@ class DocumentLLMStream(llm.LLMStream):
 # Entry point for LiveKit agent
 async def entrypoint(ctx: JobContext):
     """Enhanced LiveKit agent entry point with full voice pipeline"""
-    
+
     logger.info(f"Voice agent started for room: {ctx.room.name}")
-    
+
     # Create voice service
     voice_service = EnhancedVoiceService()
-    
+
     # Connect to room
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-    
-    # Create voice pipeline
+
+    # Create and start voice pipeline (agent is started inside create_voice_pipeline)
     agent = await voice_service.create_voice_pipeline(ctx.room)
-    
-    # Set up initial greeting with context
-    initial_ctx = llm.ChatContext().append(
-        role="system",
-        text="""You are an intelligent document assistant with voice capabilities.
-        
-You have access to a comprehensive document knowledge base with contextual embeddings that understand:
-- Local context: Information within specific sections
-- Document context: How information relates within a document  
-- Global context: Relationships across all documents
 
-Your capabilities:
-1. Search and analyze documents using natural language
-2. Provide summaries and extract key information
-3. Track action items and decisions from meetings
-4. Answer questions with full context awareness
-5. Make connections across multiple documents
-
-Always be conversational, helpful, and precise. If you're not sure about something, say so and offer to search for more information."""
-    )
-    
-    agent.chat_ctx = initial_ctx
-    
-    # Start the agent
-    agent.start(ctx.room)
-    
     # Send initial greeting
     await agent.say(
         "Hello! I'm your document intelligence assistant. I can help you search through your documents, "
@@ -518,9 +545,5 @@ def create_worker_options() -> WorkerOptions:
         api_key=settings.livekit_api_key,
         api_secret=settings.livekit_api_secret,
         ws_url=settings.livekit_url,
-        worker_type=WorkerOptions.WorkerType.ROOM,
-        max_idle_time=300,  # 5 minutes
-        shutdown_grace_period=30,
-        name="document-intelligence-voice-agent",
-        request_fnc=lambda req: True  # Accept all rooms
+        # worker_type removed - deprecated in newer versions
     )

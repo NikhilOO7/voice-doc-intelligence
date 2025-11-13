@@ -7,6 +7,8 @@ Manages multi-level context storage and retrieval
 import asyncio
 import json
 import logging
+import uuid
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import numpy as np
@@ -25,6 +27,18 @@ from apps.api.core.connections import get_qdrant_client, get_redis_client
 
 logger = logging.getLogger(__name__)
 
+def generate_point_id(chunk_id: str, context_level: str) -> str:
+    """
+    Generate a valid UUID for Qdrant point ID from chunk_id and context level.
+    Uses UUID v5 (name-based UUID) to ensure deterministic and valid UUIDs.
+    """
+    # Create a namespace UUID for our application
+    namespace = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')  # DNS namespace
+    # Combine chunk_id and context_level to create unique name
+    name = f"{chunk_id}_{context_level}"
+    # Generate UUID v5
+    return str(uuid.uuid5(namespace, name))
+
 @dataclass
 class SearchResult:
     """Search result with contextual information"""
@@ -42,7 +56,7 @@ class VectorStoreService:
     
     def __init__(self):
         self.collection_name = settings.qdrant_collection_name
-        self.vector_size = 384  # Default for all-MiniLM-L6-v2
+        self.vector_size = 1024  # Default for all-MiniLM-L6-v2
         
     async def initialize(self):
         """Initialize vector store"""
@@ -161,7 +175,14 @@ class ModernVectorStore:
             "global": f"{settings.qdrant_collection_name}_global",
             "unified": f"{settings.qdrant_collection_name}_unified"
         }
-        self.vector_size = 384  # Default for all-MiniLM-L6-v2
+        # Dynamic vector size based on embedding model
+        # text-embedding-3-small: 1536, text-embedding-ada-002: 1536, all-MiniLM-L6-v2: 1024
+        if "text-embedding-3-large" in settings.embedding_model:
+            self.vector_size = 3072
+        elif "text-embedding" in settings.embedding_model:
+            self.vector_size = 1536
+        else:
+            self.vector_size = 1024
         self.cache_ttl = 3600  # 1 hour cache
         
     async def initialize(self):
@@ -224,39 +245,51 @@ class ModernVectorStore:
                 }
             
             # Local context point
-            local_payload = {**base_payload, "context_level": "local"}
+            local_payload = {
+                **base_payload,
+                "context_level": "local",
+                "original_chunk_id": chunk_id  # Store original for reference
+            }
             if "local_context" in data["metadata"]:
                 local_payload["local_context"] = data["metadata"]["local_context"]
-            
+
             points_by_level["local"].append(
                 PointStruct(
-                    id=f"{chunk_id}_local",
+                    id=generate_point_id(chunk_id, "local"),
                     vector=data["embedding"],
                     payload=local_payload
                 )
             )
-            
+
             # Document context point
-            doc_payload = {**base_payload, "context_level": "document"}
+            doc_payload = {
+                **base_payload,
+                "context_level": "document",
+                "original_chunk_id": chunk_id  # Store original for reference
+            }
             if "document_context" in data["metadata"]:
                 doc_payload["document_context"] = data["metadata"]["document_context"]
-            
+
             points_by_level["document"].append(
                 PointStruct(
-                    id=f"{chunk_id}_document",
+                    id=generate_point_id(chunk_id, "document"),
                     vector=data["embedding"],
                     payload=doc_payload
                 )
             )
-            
+
             # Global context point
-            global_payload = {**base_payload, "context_level": "global"}
+            global_payload = {
+                **base_payload,
+                "context_level": "global",
+                "original_chunk_id": chunk_id  # Store original for reference
+            }
             if "global_context" in data["metadata"]:
                 global_payload["global_context"] = data["metadata"]["global_context"]
-            
+
             points_by_level["global"].append(
                 PointStruct(
-                    id=f"{chunk_id}_global",
+                    id=generate_point_id(chunk_id, "global"),
                     vector=data["embedding"],
                     payload=global_payload
                 )
@@ -266,16 +299,17 @@ class ModernVectorStore:
             unified_payload = {
                 **base_payload,
                 "context_level": "unified",
+                "original_chunk_id": chunk_id,  # Store original for reference
                 "all_contexts": {
                     "local": data["metadata"].get("local_context"),
                     "document": data["metadata"].get("document_context"),
                     "global": data["metadata"].get("global_context")
                 }
             }
-            
+
             points_by_level["unified"].append(
                 PointStruct(
-                    id=f"{chunk_id}_unified",
+                    id=generate_point_id(chunk_id, "unified"),
                     vector=data["embedding"],
                     payload=unified_payload
                 )

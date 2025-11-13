@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     
     # Voice Processing Settings
     livekit_url: str = Field(default="ws://localhost:7880", env="LIVEKIT_URL")
-    livekit_api_key: str = Field(default="devkey", env="LIVEKIT_API_KEY")
-    livekit_api_secret: str = Field(default="secret", env="LIVEKIT_API_SECRET")
+    livekit_api_key: str = Field(default="APIXjm39Ra3J5e2", env="LIVEKIT_API_KEY")
+    livekit_api_secret: str = Field(default="z9vkfnS7YzWkzEjtzjDxmgxgu45i20P4ki61Vm3u4eT", env="LIVEKIT_API_SECRET")
     
     # Voice Pipeline Settings
     vad_threshold: float = Field(default=0.5, env="VAD_THRESHOLD")
