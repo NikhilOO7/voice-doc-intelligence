@@ -308,31 +308,32 @@ class DocumentIntelligenceVoiceAgent:
                     "confidence": 0.0
                 }
             else:
-                response = await self.rag_service.generate_contextual_response(
+                # Use the RAG service's process_query method which handles everything
+                response = await self.rag_service.process_query(
                     query=query,
-                    search_results=search_results["results"],
-                    conversation_context=context,
-                    audio_metadata=audio_metadata
+                    conversation_id=conversation_id,
+                    context_types=None  # Will use all context types
                 )
 
             # Add response to conversation
             context.add_message("assistant", response["answer"])
-            
+
             # Extract action items and decisions
             if "action" in query.lower() or "todo" in query.lower():
                 context.action_items.extend(response.get("action_items", []))
             if "decide" in query.lower() or "decision" in query.lower():
                 context.decisions.extend(response.get("decisions", []))
-            
-            # Update current documents
-            for result in search_results["results"]:
-                doc_id = result["document_id"]
-                if doc_id not in context.current_documents:
+
+            # Update current documents from response sources
+            sources = response.get("sources", [])
+            for source in sources:
+                doc_id = source.get("document_id")
+                if doc_id and doc_id not in context.current_documents:
                     context.current_documents.append(doc_id)
-            
+
             return {
                 "answer": response["answer"],
-                "sources": search_results["results"],
+                "sources": sources,  # Use sources from RAG response
                 "context_level": context.active_context_level,
                 "conversation_id": conversation_id,
                 "metrics": {
@@ -589,12 +590,22 @@ async def entrypoint(ctx: JobContext):
         vad = silero.VAD.load()
         logger.info("✅ VAD loaded")
 
-        # Create AgentSession with modern API
+        # Create AgentSession with modern API using plugin instances
         logger.info("📦 Creating AgentSession...")
+        logger.info(f"  STT: Deepgram {settings.deepgram_model}")
+        logger.info(f"  LLM: OpenAI {settings.openai_model}")
+        logger.info(f"  TTS: Cartesia {settings.cartesia_model}")
+
         session = AgentSession(
-            stt=f"deepgram/{settings.deepgram_model}",  # e.g., "deepgram/nova-2"
-            llm=f"openai/{settings.openai_model}",       # e.g., "openai/gpt-4o"
-            tts=f"cartesia/{settings.cartesia_model}:{settings.cartesia_voice_id}",  # e.g., "cartesia/sonic-english:voice-id"
+            stt=deepgram.STT(
+                model=settings.deepgram_model,
+                language=settings.deepgram_language,
+            ),
+            llm=lk_openai.LLM(model=settings.openai_model),
+            tts=cartesia.TTS(
+                model=settings.cartesia_model,
+                voice=settings.cartesia_voice_id,
+            ),
             vad=vad,
         )
         logger.info("✅ AgentSession created")

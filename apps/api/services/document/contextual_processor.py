@@ -37,19 +37,8 @@ logger = logging.getLogger(__name__)
 
 # Download required NLTK data
 def download_nltk_data():
-    """Download NLTK data with SSL workaround"""
-    import ssl
+    """Download NLTK data packages (SSL certificates properly installed)"""
     import os
-
-    # Create unverified SSL context for NLTK downloads (macOS workaround)
-    try:
-        _create_unverified_https_context = ssl._create_unverified_context
-    except AttributeError:
-        # Legacy Python that doesn't verify HTTPS certificates by default
-        pass
-    else:
-        # Handle target environment that doesn't support HTTPS verification
-        ssl._create_default_https_context = _create_unverified_https_context
 
     # Ensure NLTK data directory exists
     nltk_data_dir = os.path.expanduser('~/nltk_data')
@@ -59,23 +48,22 @@ def download_nltk_data():
     packages = ['punkt', 'punkt_tab', 'stopwords']
     for package in packages:
         try:
-            nltk.download(package, quiet=True, raise_on_error=True)
-            logger.info(f"Successfully downloaded NLTK package: {package}")
-        except Exception as e:
-            logger.warning(f"Failed to download NLTK package '{package}': {e}")
-            # Check if package already exists locally
+            # First check if package exists locally
+            if package == 'punkt':
+                nltk.data.find('tokenizers/punkt')
+            elif package == 'punkt_tab':
+                nltk.data.find('tokenizers/punkt_tab')
+            elif package == 'stopwords':
+                nltk.data.find('corpora/stopwords')
+            logger.debug(f"NLTK package '{package}' already available locally")
+        except LookupError:
+            # Package not found, try to download
             try:
-                if package == 'punkt':
-                    nltk.data.find('tokenizers/punkt')
-                    logger.info(f"NLTK package '{package}' already available locally")
-                elif package == 'punkt_tab':
-                    nltk.data.find('tokenizers/punkt_tab')
-                    logger.info(f"NLTK package '{package}' already available locally")
-                elif package == 'stopwords':
-                    nltk.data.find('corpora/stopwords')
-                    logger.info(f"NLTK package '{package}' already available locally")
-            except LookupError:
-                logger.warning(f"NLTK package '{package}' not available locally or via download")
+                nltk.download(package, quiet=True, raise_on_error=True)
+                logger.info(f"✅ Downloaded NLTK package: {package}")
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to download NLTK package '{package}': {e}")
+                logger.warning(f"NLTK functionality requiring '{package}' may be limited")
 
 # Initialize NLTK data
 try:

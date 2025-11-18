@@ -186,7 +186,7 @@ async def create_voice_room(
         session_id = str(uuid.uuid4())
         
         # Create room via LiveKit API
-        room_service = RoomService(
+        room_service = api.RoomService(
             settings.livekit_url,
             settings.livekit_api_key,
             settings.livekit_api_secret

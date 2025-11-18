@@ -14,12 +14,16 @@ from datetime import datetime
 import aiofiles
 
 # Try to import magic, but make it optional
+# Note: Requires libmagic system library (install with: brew install libmagic or port install file)
 try:
     import magic
+    # Test if libmagic is actually available
+    _ = magic.Magic(mime=True)
     HAS_MAGIC = True
-except (ImportError, OSError):
+except (ImportError, OSError, AttributeError):
     HAS_MAGIC = False
-    logging.warning("python-magic not available. File type detection will be limited.")
+    # Fallback to extension-based MIME type detection (works fine for PDF, DOCX, TXT, DOC)
+    # To enable python-magic: install libmagic system library first
 
 from apps.api.core.config import settings
 
