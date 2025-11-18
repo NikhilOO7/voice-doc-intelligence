@@ -268,6 +268,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestLoggingMiddleware)
 
+# Import and include routers
+from apps.api.routers import voice
+app.include_router(voice.router)
+
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

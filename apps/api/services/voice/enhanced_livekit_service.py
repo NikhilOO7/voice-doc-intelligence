@@ -17,16 +17,17 @@ import numpy as np
 from livekit import api, rtc
 from livekit.agents import (
     AutoSubscribe, JobContext, WorkerOptions,
-    llm, stt, tts, voice
+    llm, stt, tts, Agent, AgentSession
 )
 # OpenAI SDK
 import openai
 
 # Your app imports
 from apps.api.core.config import settings
-from apps.api.services.rag.llamaindex_service import ModernRAGService
-from apps.api.services.document.vector_store import ModernVectorStore
-from apps.api.services.document.embeddings import ContextualEmbeddingGenerator
+
+# RAG services will be imported lazily to avoid blocking worker startup
+# DO NOT import them here at module level - they load heavy ML models
+RAG_SERVICES_AVAILABLE = True  # Assume available, will check during lazy init
 
 logger = logging.getLogger(__name__)
 
@@ -92,16 +93,34 @@ class LatencyMetrics:
 
 class DocumentIntelligenceVoiceAgent:
     """Enhanced voice agent with full contextual embedding support"""
-    
+
     def __init__(self):
-        self.rag_service = ModernRAGService()
-        self.vector_store = ModernVectorStore()
-        self.embedding_generator = ContextualEmbeddingGenerator()
+        # Lazy initialization of RAG services to avoid blocking worker startup
+        self.rag_service = None
+        self.vector_store = None
+        self.embedding_generator = None
         self.conversation_contexts: Dict[str, ConversationContext] = {}
         self.metrics = LatencyMetrics()
+
+    def _ensure_rag_services(self):
+        """Lazily initialize RAG services when first needed"""
+        if self.rag_service is None:
+            try:
+                # Import RAG services only when needed (not at module load time)
+                from apps.api.services.rag.llamaindex_service import ModernRAGService
+                from apps.api.services.document.vector_store import ModernVectorStore
+                from apps.api.services.document.embeddings import ContextualEmbeddingGenerator
+
+                self.rag_service = ModernRAGService()
+                self.vector_store = ModernVectorStore()
+                self.embedding_generator = ContextualEmbeddingGenerator()
+                logger.info("✅ RAG services initialized lazily")
+            except Exception as e:
+                logger.warning(f"Failed to initialize RAG services: {e}")
+                logger.warning("Voice agent will work without document search")
         
     async def search_documents_with_context(
-        self, 
+        self,
         query: str,
         conversation_id: str,
         context_level: str = "local",
@@ -109,14 +128,27 @@ class DocumentIntelligenceVoiceAgent:
     ) -> Dict[str, Any]:
         """Search documents using 3-level contextual embeddings"""
         try:
+            # Ensure RAG services are initialized
+            self._ensure_rag_services()
+
+            # If RAG services not available, return empty results
+            if self.rag_service is None:
+                logger.warning("RAG services not available, returning empty search results")
+                return {
+                    "results": [],
+                    "context_level": context_level,
+                    "latency_ms": 0,
+                    "message": "Document search temporarily unavailable"
+                }
+
             start_time = time.time()
-            
+
             # Get conversation context
             context = self.conversation_contexts.get(
-                conversation_id, 
+                conversation_id,
                 ConversationContext()
             )
-            
+
             # Generate query embedding with appropriate context
             query_embedding = await self.embedding_generator.generate_contextual_embedding(
                 text=query,
@@ -244,34 +276,45 @@ class DocumentIntelligenceVoiceAgent:
     ) -> Dict[str, Any]:
         """Process voice query with full contextual understanding"""
         try:
+            # Ensure RAG services are initialized
+            self._ensure_rag_services()
+
             # Get or create conversation context
             if conversation_id not in self.conversation_contexts:
                 self.conversation_contexts[conversation_id] = ConversationContext()
-            
+
             context = self.conversation_contexts[conversation_id]
-            
+
             # Update context level based on query
             context.update_context_level(query)
-            
+
             # Add query to conversation
             context.add_message("user", query)
             context.last_query = query
-            
+
             # Search with appropriate context level
             search_results = await self.search_documents_with_context(
                 query=query,
                 conversation_id=conversation_id,
                 context_level=context.active_context_level
             )
-            
+
             # Generate response using RAG with contextual embeddings
-            response = await self.rag_service.generate_contextual_response(
-                query=query,
-                search_results=search_results["results"],
-                conversation_context=context,
-                audio_metadata=audio_metadata
-            )
-            
+            # If RAG service is not available, provide a fallback response
+            if self.rag_service is None:
+                response = {
+                    "answer": "I'm currently unable to search through documents. Please ensure the document processing services are running.",
+                    "sources": [],
+                    "confidence": 0.0
+                }
+            else:
+                response = await self.rag_service.generate_contextual_response(
+                    query=query,
+                    search_results=search_results["results"],
+                    conversation_context=context,
+                    audio_metadata=audio_metadata
+                )
+
             # Add response to conversation
             context.add_message("assistant", response["answer"])
             
@@ -373,9 +416,8 @@ When answering, be conversational and natural.""",
             chat_ctx=initial_ctx,
         )
 
-        # Start the agent
-        agent.start(room)
-
+        # Agent is automatically started when VoiceAssistant is created
+        # No need to call start() explicitly in newer versions
         logger.info("Voice pipeline created and started successfully")
         return agent
 
@@ -506,37 +548,84 @@ class DocumentLLMStream(llm.LLMStream):
             ]
         )
 
+# Custom Agent class for document intelligence
+class DocumentIntelligenceAgent(Agent):
+    """Custom agent with document intelligence capabilities"""
+
+    def __init__(self):
+        super().__init__(
+            instructions="""You are an intelligent document assistant with voice capabilities.
+
+You have access to a comprehensive document knowledge base with contextual embeddings.
+Provide concise, helpful responses based on the documents available.
+When answering, be conversational and natural.
+Keep responses brief and to the point - aim for 2-3 sentences unless more detail is specifically requested."""
+        )
+
 # Entry point for LiveKit agent
 async def entrypoint(ctx: JobContext):
-    """Enhanced LiveKit agent entry point with full voice pipeline"""
+    """Enhanced LiveKit agent entry point with new AgentSession API"""
 
-    logger.info(f"Voice agent started for room: {ctx.room.name}")
+    logger.info(f"=" * 80)
+    logger.info(f"🎤 VOICE AGENT STARTING (New API)")
+    logger.info(f"Room: {ctx.room.name}")
+    logger.info(f"=" * 80)
 
-    # Create voice service
-    voice_service = EnhancedVoiceService()
+    try:
+        # Connect to room
+        logger.info(f"🔗 Connecting to room...")
+        await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+        logger.info("✅ Connected to room")
 
-    # Connect to room
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+        # Log participants
+        participants = list(ctx.room.remote_participants.values())
+        logger.info(f"👥 Participants in room: {len(participants)}")
+        for p in participants:
+            logger.info(f"  - {p.identity}")
 
-    # Create and start voice pipeline (agent is started inside create_voice_pipeline)
-    agent = await voice_service.create_voice_pipeline(ctx.room)
+        # Create VAD
+        logger.info("🎵 Loading VAD (Voice Activity Detection)...")
+        from livekit.plugins import silero
+        vad = silero.VAD.load()
+        logger.info("✅ VAD loaded")
 
-    # Send initial greeting
-    await agent.say(
-        "Hello! I'm your document intelligence assistant. I can help you search through your documents, "
-        "answer questions, and track important information from our conversation. What would you like to know?",
-        allow_interruptions=True
-    )
-    
-    # Log session start
-    session_id = ctx.room.name
-    voice_service.sessions[session_id] = {
-        "start_time": datetime.now(),
-        "agent": agent,
-        "room": ctx.room
-    }
-    
-    logger.info(f"Voice session started: {session_id}")
+        # Create AgentSession with modern API
+        logger.info("📦 Creating AgentSession...")
+        session = AgentSession(
+            stt=f"deepgram/{settings.deepgram_model}",  # e.g., "deepgram/nova-2"
+            llm=f"openai/{settings.openai_model}",       # e.g., "openai/gpt-4o"
+            tts=f"cartesia/{settings.cartesia_model}:{settings.cartesia_voice_id}",  # e.g., "cartesia/sonic-english:voice-id"
+            vad=vad,
+        )
+        logger.info("✅ AgentSession created")
+
+        # Start the session
+        logger.info("🚀 Starting agent session...")
+        await session.start(
+            room=ctx.room,
+            agent=DocumentIntelligenceAgent(),
+        )
+        logger.info("✅ Agent session started")
+
+        # Generate initial greeting
+        logger.info("💬 Generating initial greeting...")
+        await session.generate_reply(
+            instructions="Greet the user warmly and briefly introduce yourself as their document intelligence assistant. Keep it to one short sentence."
+        )
+        logger.info("✅ Greeting generated")
+
+        logger.info(f"=" * 80)
+        logger.info(f"✅ VOICE SESSION ACTIVE: {ctx.room.name}")
+        logger.info(f"Agent is now listening and will respond to user voice input...")
+        logger.info(f"=" * 80)
+
+    except Exception as e:
+        logger.error(f"=" * 80)
+        logger.error(f"❌ VOICE AGENT FAILED TO START")
+        logger.error(f"Error: {e}")
+        logger.error(f"=" * 80)
+        logger.exception("Full traceback:")
+        raise
 
 def create_worker_options() -> WorkerOptions:
     """Create worker options for voice agent"""

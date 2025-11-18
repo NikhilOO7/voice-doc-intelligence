@@ -95,75 +95,70 @@ async def health_check_server():
     logger.info("Health check server running on http://0.0.0.0:8081/health")
 
 def validate_configuration():
-    """Validate required configuration"""
+    """Validate required configuration (non-blocking)"""
     errors = []
-    
-    # Check required API keys
+
+    # Check required API keys only (skip network checks to avoid blocking)
     if not settings.deepgram_api_key:
         errors.append("DEEPGRAM_API_KEY is required")
     if not settings.cartesia_api_key:
         errors.append("CARTESIA_API_KEY is required")
     if not settings.livekit_api_key or settings.livekit_api_key == "devkey":
-        errors.append("LIVEKIT_API_KEY should be set for production")
-    
-    # Check network connectivity
-    import socket
-    try:
-        socket.create_connection(("api.deepgram.com", 443), timeout=5)
-    except:
-        errors.append("Cannot connect to Deepgram API")
-    
-    try:
-        socket.create_connection(("api.cartesia.ai", 443), timeout=5)
-    except:
-        errors.append("Cannot connect to Cartesia API")
-    
+        logger.warning("LIVEKIT_API_KEY should be set for production")
+
+    # Network connectivity will be checked when first connection is made
+    # No need to block initialization with synchronous socket checks
+
     if errors:
         for error in errors:
             logger.error(f"Configuration error: {error}")
         return False
-    
+
+    logger.info("✅ API keys validated successfully")
     return True
 
 async def main():
     """Enhanced main entry point with monitoring and health checks"""
-    
+
     logger.info("=" * 50)
     logger.info("Enhanced Voice Agent Worker Starting")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Voice Stack: Deepgram + Cartesia + LiveKit")
     logger.info(f"Target Latency: {settings.target_total_latency_ms}ms")
     logger.info("=" * 50)
-    
+
     # Validate configuration
     if not validate_configuration():
         logger.error("Configuration validation failed. Exiting.")
         sys.exit(1)
-    
-    # Start Prometheus metrics server
+
+    # Start Prometheus metrics server (non-blocking)
     if settings.enable_metrics:
-        start_http_server(9091)
-        logger.info("Prometheus metrics available at http://localhost:9091/metrics")
-    
-    # Start health check server
-    await health_check_server()
-    
+        try:
+            start_http_server(9091)
+            logger.info("Prometheus metrics available at http://localhost:9091/metrics")
+        except Exception as e:
+            logger.warning(f"Could not start Prometheus server: {e}")
+
+    # Health check server will be started after worker is initialized
+    # to avoid blocking during process pool initialization
+
     # Log voice pipeline configuration
     logger.info("Voice Pipeline Configuration:")
     for key, value in settings.voice_pipeline_config.items():
         logger.info(f"  {key}: {value}")
-    
+
     # Create worker options
     worker_options = create_worker_options()
-    
+
     # Set up graceful shutdown
     def signal_handler(sig, frame):
         logger.info(f"Received signal {sig}. Shutting down gracefully...")
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         # Run the worker
         logger.info("Starting LiveKit agent worker...")
@@ -185,15 +180,18 @@ if __name__ == "__main__":
     logger.info(f"Target Latency: {settings.target_total_latency_ms}ms")
     logger.info("=" * 50)
 
-    # Validate configuration
+    # Validate configuration (non-blocking checks only)
     if not validate_configuration():
         logger.error("Configuration validation failed. Exiting.")
         sys.exit(1)
 
-    # Start Prometheus metrics server
+    # Start Prometheus metrics server (non-blocking)
     if settings.enable_metrics:
-        start_http_server(9091)
-        logger.info("Prometheus metrics available at http://localhost:9091/metrics")
+        try:
+            start_http_server(9091)
+            logger.info("Prometheus metrics available at http://localhost:9091/metrics")
+        except Exception as e:
+            logger.warning(f"Could not start Prometheus server: {e}")
 
     # Log voice pipeline configuration
     logger.info("Voice Pipeline Configuration:")
